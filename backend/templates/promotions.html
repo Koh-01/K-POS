@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Promotions — POS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0">Promotions</h4>
+  <a href="/web/promotions/new" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg me-1"></i>New Promotion
+  </a>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Conditions</th>
+          <th>Status</th>
+          <th>Starts</th>
+          <th>Ends</th>
+          <th class="text-end">Used</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for promo in promotions %}
+        <tr>
+          <td class="text-muted">{{ promo.id }}</td>
+          <td class="fw-semibold">{{ promo.name }}</td>
+          <td>
+            {% set type_map = {
+              'discount_pct': ('bg-primary', 'Discount %'),
+              'b1f1': ('bg-info text-dark', 'Buy 1 Free 1'),
+              'happy_hour': ('bg-warning text-dark', 'Happy Hour'),
+              'promo_code': ('bg-success', 'Promo Code'),
+            } %}
+            {% set badge = type_map.get(promo.type, ('bg-secondary', promo.type)) %}
+            <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
+          </td>
+          <td class="text-muted small">
+            {% if promo.type == 'discount_pct' %}
+              {{ promo.conditions.get('percent', 0) }}% off
+            {% elif promo.type == 'b1f1' %}
+              Product #{{ promo.conditions.get('product_id', '?') }}
+            {% elif promo.type == 'happy_hour' %}
+              {{ promo.conditions.get('start_time','?') }}–{{ promo.conditions.get('end_time','?') }},
+              {{ promo.conditions.get('percent', 0) }}% off
+            {% elif promo.type == 'promo_code' %}
+              Code: <code>{{ promo.conditions.get('code','?') }}</code>,
+              {{ promo.conditions.get('percent', 0) }}% off
+            {% endif %}
+          </td>
+          <td>
+            {% if promo.is_active %}
+            <span class="badge bg-success">Active</span>
+            {% else %}
+            <span class="badge bg-secondary">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small">
+            {{ promo.starts_at.strftime('%d %b %Y') if promo.starts_at else '—' }}
+          </td>
+          <td class="text-muted small">
+            {{ promo.ends_at.strftime('%d %b %Y') if promo.ends_at else '—' }}
+          </td>
+          <td class="text-end">{{ promo.usage_count }}</td>
+          <td>
+            <div class="d-flex gap-1">
+              <a href="/web/promotions/{{ promo.id }}/edit" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-pencil"></i>
+              </a>
+              <form method="post" action="/web/promotions/{{ promo.id }}/toggle" style="display:inline">
+                <button class="btn btn-sm {{ 'btn-outline-secondary' if promo.is_active else 'btn-outline-success' }}" title="{{ 'Deactivate' if promo.is_active else 'Activate' }}">
+                  <i class="bi {{ 'bi-pause-fill' if promo.is_active else 'bi-play-fill' }}"></i>
+                </button>
+              </form>
+              <form method="post" action="/web/promotions/{{ promo.id }}/delete" style="display:inline">
+                <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete promotion {{ promo.name|replace("'", "\\'") }}?')">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="text-center text-muted py-4">No promotions found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer text-muted small bg-transparent">
+    {{ promotions|length }} promotion(s) shown
+  </div>
+</div>
+{% endblock %}

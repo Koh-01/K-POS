@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block title %}Products — POS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="fw-bold mb-0">Products</h4>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#productModal" onclick="openCreateModal()">
+    <i class="bi bi-plus-lg me-1"></i>New Product
+  </button>
+</div>
+
+<!-- Save order toast -->
+<div class="position-fixed top-0 end-0 p-3" style="z-index:1100">
+  <div id="orderToast" class="toast align-items-center border-0" role="alert" aria-live="assertive">
+    <div class="d-flex">
+      <div class="toast-body" id="orderToastMsg">Order saved.</div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Product filters -->
+<div class="row g-2 mb-3">
+  <div class="col-md-6">
+    <div class="input-group input-group-sm">
+      <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+      <input type="text" id="productSearch" class="form-control" placeholder="Search products...">
+      <button class="btn btn-outline-secondary" type="button" id="productSearchClear" style="display:none">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <select id="productCategoryFilter" class="form-select form-select-sm">
+      <option value="">All Categories</option>
+      {% for cat in categories %}
+      <option value="{{ cat.id }}">{{ cat.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-transparent d-flex align-items-center gap-2">
+    <span class="fw-semibold flex-grow-1">Products</span>
+    <span class="text-muted small"><i class="bi bi-grip-vertical me-1"></i>Drag rows to reorder</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:32px"></th>
+          <th>Name</th>
+          <th>Category</th>
+          <th class="text-end">Price (RM)</th>
+          <th>By Weight</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="productTableBody">
+        {% for p in products %}
+        <tr data-id="{{ p.id }}" data-cat-id="{{ p.category_id or '' }}">
+          <td class="text-muted ps-3" style="cursor:grab">
+            <i class="bi bi-grip-vertical drag-handle"></i>
+          </td>
+          <td class="fw-semibold">{{ p.name }}</td>
+          <td>
+            {% if p.category %}
+            <span class="badge bg-light text-dark border">{{ p.category.name }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-end">{{ "%.2f"|format(p.price|float) }}</td>
+          <td>
+            {% if p.sold_by_weight %}
+            <span class="badge bg-info-subtle text-info border border-info-subtle">Yes</span>
+            {% else %}
+            <span class="text-muted small">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.status == 'active' %}
+            <span class="badge bg-success">Active</span>
+            {% else %}
+            <span class="badge bg-secondary">Inactive</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="d-flex gap-1">
+              <button class="btn btn-sm btn-outline-primary"
+                data-bs-toggle="modal" data-bs-target="#productModal"
+                data-id="{{ p.id }}"
+                data-name="{{ p.name|e }}"
+                data-category-id="{{ p.category_id or '' }}"
+                data-price="{{ p.price|float }}"
+                data-description="{{ (p.description or '')|e }}"
+                data-sort-order="{{ p.sort_order or 0 }}"
+                data-sold-by-weight="{{ 'true' if p.sold_by_weight else 'false' }}"
+                onclick="openEditModal(this)">
+                <i class="bi bi-pencil"></i> Edit
+              </button>
+              <form method="post" action="/web/products/{{ p.id }}/toggle" style="display:inline">
+                <button class="btn btn-sm {{ 'btn-outline-secondary' if p.status == 'active' else 'btn-outline-success' }}">
+                  {{ 'Disable' if p.status == 'active' else 'Enable' }}
+                </button>
+              </form>
+              <form method="post" action="/web/products/{{ p.id }}/delete" style="display:inline">
+                <button class="btn btn-sm btn-outline-danger"
+                  onclick="return confirm('Delete product \'{{ p.name|e }}\'?')">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted py-4">No products found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer text-muted small bg-transparent">
+    {{ products|length }} product(s) — drag <i class="bi bi-grip-vertical"></i> to reorder
+  </div>
+</div>
+
+<!-- Categories card -->
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-transparent d-flex align-items-center gap-2">
+    <i class="bi bi-tags me-1"></i>
+    <span class="fw-semibold flex-grow-1">Categories</span>
+    <span class="text-muted small"><i class="bi bi-grip-vertical me-1"></i>Drag rows to reorder</span>
+  </div>
+  <div class="card-body">
+    {% if categories %}
+    <div class="input-group input-group-sm mb-3" style="max-width:340px">
+      <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+      <input type="text" id="catSearch" class="form-control" placeholder="Search categories...">
+      <button class="btn btn-outline-secondary" type="button" id="catSearchClear" style="display:none">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="table-responsive mb-3">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:32px"></th>
+            <th>Name</th>
+            <th style="width:90px">Order</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="catTableBody">
+          {% for cat in categories %}
+          <tr data-id="{{ cat.id }}">
+            <td class="ps-3" style="cursor:grab">
+              <i class="bi bi-grip-vertical drag-handle text-muted"></i>
+            </td>
+            <td class="fw-semibold">{{ cat.name }}</td>
+            <td><span class="badge bg-light text-dark border sort-badge">{{ cat.sort_order }}</span></td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary me-1"
+                data-bs-toggle="modal" data-bs-target="#editCategoryModal"
+                data-id="{{ cat.id }}"
+                data-name="{{ cat.name|e }}"
+                data-sort-order="{{ cat.sort_order }}">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="post" action="/web/categories/{{ cat.id }}/delete" class="d-inline"
+                    onsubmit="return confirm('Remove category \'{{ cat.name|e }}\'?')">
+                <button type="submit" class="btn btn-sm btn-outline-danger">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-3">No categories yet.</p>
+    {% endif %}
+
+    <form method="post" action="/web/categories/new" class="row g-2 align-items-end">
+      <div class="col-auto flex-grow-1">
+        <label class="form-label small mb-1">Category Name</label>
+        <input type="text" name="name" class="form-control form-control-sm" placeholder="e.g. Beverages" required>
+      </div>
+      <div class="col-auto" style="width:110px">
+        <label class="form-label small mb-1">Sort Order</label>
+        <input type="number" name="sort_order" class="form-control form-control-sm" value="0" min="0">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-plus-lg me-1"></i>Add Category
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Product Create / Edit Modal -->
+<div class="modal fade" id="productModal" tabindex="-1" aria-labelledby="productModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="productForm" method="post" action="/web/products/new">
+        <div class="modal-header">
+          <h5 class="modal-title" id="productModalLabel">New Product</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
+            <input type="text" name="name" id="field-name" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Category</label>
+            <select name="category_id" id="field-category" class="form-select">
+              <option value="">— None —</option>
+              {% for cat in categories %}
+              <option value="{{ cat.id }}">{{ cat.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Price (RM) <span class="text-danger">*</span></label>
+            <input type="number" name="price" id="field-price" class="form-control" step="0.01" min="0" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea name="description" id="field-description" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Sort Order <span class="text-muted small">(lower = shown first)</span></label>
+            <input type="number" name="sort_order" id="field-sort-order" class="form-control" value="0" min="0">
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input type="checkbox" name="sold_by_weight" id="field-sold-by-weight" class="form-check-input" value="1">
+              <label class="form-check-label" for="field-sold-by-weight">
+                Sold by weight <span class="text-muted small">(price per kg)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="productModalSubmit">Create Product</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Category Modal -->
+<div class="modal fade" id="editCategoryModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <form method="post" id="editCategoryForm" action="">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-tag me-2"></i>Edit Category</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Name <span class="text-danger">*</span></label>
+            <input type="text" name="name" id="editCatName" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Sort Order <span class="text-muted small">(lower = first)</span></label>
+            <input type="number" name="sort_order" id="editCatSortOrder" class="form-control" min="0">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+<script>
+// ── Product search & category filter ─────────────────────────────────────────
+const productSearch = document.getElementById('productSearch');
+const productCategoryFilter = document.getElementById('productCategoryFilter');
+const productSearchClear = document.getElementById('productSearchClear');
+
+function filterProducts() {
+  const query = (productSearch.value || '').trim().toLowerCase();
+  const catId = productCategoryFilter.value;
+  productSearchClear.style.display = query ? '' : 'none';
+  document.querySelectorAll('#productTableBody tr[data-id]').forEach(row => {
+    const name = row.querySelector('td:nth-child(2)').textContent.trim().toLowerCase();
+    const rowCatId = row.dataset.catId || '';
+    const matchName = !query || name.includes(query);
+    const matchCat = !catId || rowCatId === catId;
+    row.style.display = (matchName && matchCat) ? '' : 'none';
+  });
+}
+productSearch.addEventListener('input', filterProducts);
+productCategoryFilter.addEventListener('change', filterProducts);
+productSearchClear.addEventListener('click', () => {
+  productSearch.value = '';
+  filterProducts();
+});
+
+// ── Category search ───────────────────────────────────────────────────────────
+const catSearch = document.getElementById('catSearch');
+const catSearchClear = document.getElementById('catSearchClear');
+if (catSearch) {
+  catSearch.addEventListener('input', function() {
+    const query = this.value.trim().toLowerCase();
+    catSearchClear.style.display = query ? '' : 'none';
+    document.querySelectorAll('#catTableBody tr[data-id]').forEach(row => {
+      const name = row.querySelector('td:nth-child(2)').textContent.trim().toLowerCase();
+      row.style.display = (!query || name.includes(query)) ? '' : 'none';
+    });
+  });
+  catSearchClear.addEventListener('click', () => {
+    catSearch.value = '';
+    catSearch.dispatchEvent(new Event('input'));
+  });
+}
+
+// ── Modal helpers ──────────────────────────────────────────────────────────────
+function openCreateModal() {
+  document.getElementById('productModalLabel').textContent = 'New Product';
+  document.getElementById('productModalSubmit').textContent = 'Create Product';
+  document.getElementById('productForm').action = '/web/products/new';
+  document.getElementById('field-name').value = '';
+  document.getElementById('field-category').value = '';
+  document.getElementById('field-price').value = '';
+  document.getElementById('field-description').value = '';
+  document.getElementById('field-sort-order').value = '0';
+  document.getElementById('field-sold-by-weight').checked = false;
+}
+
+function openEditModal(btn) {
+  document.getElementById('productModalLabel').textContent = 'Edit Product';
+  document.getElementById('productModalSubmit').textContent = 'Save Changes';
+  document.getElementById('productForm').action = '/web/products/' + btn.dataset.id + '/edit';
+  document.getElementById('field-name').value = btn.dataset.name;
+  document.getElementById('field-price').value = btn.dataset.price;
+  document.getElementById('field-description').value = btn.dataset.description;
+  document.getElementById('field-sort-order').value = btn.dataset.sortOrder;
+  document.getElementById('field-sold-by-weight').checked = btn.dataset.soldByWeight === 'true';
+  document.getElementById('field-category').value = btn.dataset.categoryId || '';
+}
+
+document.getElementById('editCategoryModal').addEventListener('show.bs.modal', function(e) {
+  const btn = e.relatedTarget;
+  document.getElementById('editCategoryForm').action = '/web/categories/' + btn.dataset.id + '/edit';
+  document.getElementById('editCatName').value = btn.dataset.name;
+  document.getElementById('editCatSortOrder').value = btn.dataset.sortOrder;
+});
+
+// ── Toast helper ──────────────────────────────────────────────────────────────
+const _toastEl = document.getElementById('orderToast');
+const _toast = new bootstrap.Toast(_toastEl, {delay: 2000});
+
+function showToast(msg, type) {
+  document.getElementById('orderToastMsg').textContent = msg;
+  _toastEl.className = 'toast align-items-center border-0 text-bg-' + (type || 'success');
+  _toast.show();
+}
+
+// ── Product drag-and-drop ─────────────────────────────────────────────────────
+const productBody = document.getElementById('productTableBody');
+if (productBody) {
+  new Sortable(productBody, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'table-active',
+    onEnd: async function() {
+      const rows = productBody.querySelectorAll('tr[data-id]');
+      const items = Array.from(rows).map((row, i) => ({
+        id: parseInt(row.dataset.id),
+        sort_order: i
+      }));
+      try {
+        const r = await fetch('/web/products/reorder', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(items)
+        });
+        if (r.ok) showToast('Product order saved');
+        else showToast('Failed to save order', 'danger');
+      } catch {
+        showToast('Network error', 'danger');
+      }
+    }
+  });
+}
+
+// ── Category drag-and-drop ────────────────────────────────────────────────────
+const catBody = document.getElementById('catTableBody');
+if (catBody) {
+  new Sortable(catBody, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'table-active',
+    onEnd: async function() {
+      const rows = catBody.querySelectorAll('tr[data-id]');
+      const items = Array.from(rows).map((row, i) => ({
+        id: parseInt(row.dataset.id),
+        sort_order: i
+      }));
+      // Update visible order badges
+      rows.forEach((row, i) => {
+        const badge = row.querySelector('.sort-badge');
+        if (badge) badge.textContent = i;
+      });
+      try {
+        const r = await fetch('/web/categories/reorder', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(items)
+        });
+        if (r.ok) showToast('Category order saved');
+        else showToast('Failed to save order', 'danger');
+      } catch {
+        showToast('Network error', 'danger');
+      }
+    }
+  });
+}
+</script>
+{% endblock %}

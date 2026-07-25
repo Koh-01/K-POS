@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Payments — POS Admin{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-4">Payments</h4>
+
+<!-- Filter tabs -->
+<div class="mb-3 d-flex gap-2">
+  <a href="/web/payments?status_filter=all" class="btn btn-sm {{ 'btn-dark' if status_filter == 'all' else 'btn-outline-secondary' }}">All</a>
+  <a href="/web/payments?status_filter=completed" class="btn btn-sm {{ 'btn-dark' if status_filter == 'completed' else 'btn-outline-secondary' }}">Completed</a>
+  <a href="/web/payments?status_filter=voided" class="btn btn-sm {{ 'btn-dark' if status_filter == 'voided' else 'btn-outline-secondary' }}">Voided</a>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>Table</th>
+          <th>Method</th>
+          <th class="text-end">Total (RM)</th>
+          <th>Status</th>
+          <th>Date</th>
+          <th>Cashier</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td class="text-muted">#{{ "%04d"|format(p.id) }}</td>
+          <td>
+            {% if p.order and p.order.table %}
+              {{ p.order.table.name }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.payment_method == 'cash' %}
+            <span class="badge bg-success"><i class="bi bi-cash me-1"></i>Cash</span>
+            {% else %}
+            <span class="badge bg-info text-dark"><i class="bi bi-qr-code me-1"></i>DuitNow</span>
+            {% endif %}
+          </td>
+          <td class="text-end fw-semibold">{{ "%.2f"|format(p.grand_total|float) }}</td>
+          <td>
+            {% if p.status == 'completed' %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle">Completed</span>
+            {% else %}
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Voided</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small">{{ p.created_at.strftime('%d %b %Y %H:%M') }}</td>
+          <td class="text-muted small">{{ p.cashier.full_name if p.cashier else '—' }}</td>
+          <td>
+            {% if p.status == 'completed' %}
+            <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal"
+              data-bs-target="#voidModal" data-id="{{ p.id }}" data-total="{{ '%.2f'|format(p.grand_total|float) }}">
+              Void
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">No payments found</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Void modal -->
+<div class="modal fade" id="voidModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title">Void Payment</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post" id="voidForm">
+        <div class="modal-body">
+          <p class="small text-muted mb-2">Voiding <strong id="voidTotal"></strong></p>
+          <label class="form-label small fw-semibold">Reason</label>
+          <textarea name="reason" class="form-control form-control-sm" rows="2" required></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-danger btn-sm">Confirm Void</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.getElementById('voidModal').addEventListener('show.bs.modal', function(e) {
+  const btn = e.relatedTarget;
+  document.getElementById('voidForm').action = '/web/payments/' + btn.dataset.id + '/void';
+  document.getElementById('voidTotal').textContent = 'RM ' + btn.dataset.total;
+});
+</script>
+{% endblock %}

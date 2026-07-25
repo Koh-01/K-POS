@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}Salary — POS Admin{% endblock %}
+
+{% block extra_head %}
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    .slip-print { display: block !important; }
+    body { background: white; }
+  }
+  .slip-print { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 no-print">
+  <h4 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Salary</h4>
+</div>
+
+{% if ok %}
+<div class="alert alert-success alert-dismissible fade show no-print" role="alert">
+  {% if ok == 'worker_added' %}Worker added successfully.
+  {% elif ok == 'worker_edited' %}Worker updated.
+  {% elif ok == 'worker_deleted' %}Worker removed.
+  {% elif ok == 'paid' %}Salary payment recorded.
+  {% elif ok == 'payment_edited' %}Payment updated.
+  {% elif ok == 'payment_deleted' %}Payment deleted.
+  {% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-3 no-print" id="salaryTab" role="tablist">
+  <li class="nav-item">
+    <a class="nav-link {% if tab != 'payments' %}active{% endif %}"
+       href="/web/salary?tab=workers">
+      <i class="bi bi-people me-1"></i>Workers
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if tab == 'payments' %}active{% endif %}"
+       href="/web/salary?tab=payments">
+      <i class="bi bi-receipt me-1"></i>Payment History
+    </a>
+  </li>
+</ul>
+
+<!-- ═══════════════ WORKERS TAB ═══════════════ -->
+{% if tab != 'payments' %}
+<div class="card no-print">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">Workers</span>
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addWorkerModal">
+      <i class="bi bi-person-plus me-1"></i>Add Worker
+    </button>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Name</th>
+          <th>Position</th>
+          <th>Phone</th>
+          <th class="text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for w in workers %}
+        <tr>
+          <td class="fw-semibold">{{ w.name }}</td>
+          <td class="text-muted">{{ w.position or '—' }}</td>
+          <td class="text-muted">{{ w.phone or '—' }}</td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-success me-1"
+              data-bs-toggle="modal" data-bs-target="#payModal"
+              data-worker-id="{{ w.id }}" data-worker-name="{{ w.name }}">
+              <i class="bi bi-cash me-1"></i>Pay
+            </button>
+            <button class="btn btn-sm btn-outline-secondary me-1"
+              data-bs-toggle="modal" data-bs-target="#editWorkerModal"
+              data-worker-id="{{ w.id }}" data-worker-name="{{ w.name }}"
+              data-worker-position="{{ w.position or '' }}" data-worker-phone="{{ w.phone or '' }}">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <form method="post" action="/web/salary/workers/{{ w.id }}/delete"
+                  class="d-inline"
+                  onsubmit="return confirm('Remove {{ w.name }}?')">
+              <button type="submit" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="text-center text-muted py-4">No workers yet. Click "Add Worker" to get started.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ═══════════════ PAYMENTS TAB ═══════════════ -->
+{% if tab == 'payments' %}
+<div class="card no-print">
+  <div class="card-header fw-semibold">Payment History</div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Date</th>
+          <th>Worker</th>
+          <th>Month / Year</th>
+          <th class="text-end">Amount (RM)</th>
+          <th>Note</th>
+          <th class="text-end no-print">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td class="text-muted small">{{ p.created_at.strftime('%d %b %Y') }}</td>
+          <td class="fw-semibold">{{ p.worker_name }}</td>
+          <td>{{ months[p.month - 1] }} {{ p.year }}</td>
+          <td class="text-end fw-bold text-success">{{ '%.2f'|format(p.amount|float) }}</td>
+          <td class="text-muted small">{{ p.note or '—' }}</td>
+          <td class="text-end no-print">
+            <a href="/web/salary/payments/{{ p.id }}/print"
+               class="btn btn-sm btn-outline-secondary me-1" title="Export PDF">
+              <i class="bi bi-file-earmark-pdf"></i>
+            </a>
+            <button class="btn btn-sm btn-outline-primary me-1"
+              data-bs-toggle="modal" data-bs-target="#editPaymentModal"
+              data-payment-id="{{ p.id }}"
+              data-payment-amount="{{ '%.2f'|format(p.amount|float) }}"
+              data-payment-note="{{ p.note or '' }}"
+              data-payment-label="{{ p.worker_name }} · {{ months[p.month - 1] }} {{ p.year }}">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <form method="post" action="/web/salary/payments/{{ p.id }}/delete"
+                  class="d-inline"
+                  onsubmit="return confirm('Delete this payment?')">
+              <button type="submit" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-4">No salary payments recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+
+<!-- ═══════════════ MODALS ═══════════════ -->
+
+<!-- Add Worker Modal -->
+<div class="modal fade no-print" id="addWorkerModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="post" action="/web/salary/workers">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Add Worker</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
+            <input type="text" name="name" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Position <span class="text-muted">(optional)</span></label>
+            <input type="text" name="position" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Phone <span class="text-muted">(optional)</span></label>
+            <input type="text" name="phone" class="form-control">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Worker</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Worker Modal -->
+<div class="modal fade no-print" id="editWorkerModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="post" id="editWorkerForm" action="">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Worker</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
+            <input type="text" name="name" id="editWorkerName" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Position</label>
+            <input type="text" name="position" id="editWorkerPosition" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Phone</label>
+            <input type="text" name="phone" id="editWorkerPhone" class="form-control">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Pay Salary Modal -->
+<div class="modal fade no-print" id="payModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="post" action="/web/salary/payments">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-cash me-2"></i>Pay Salary</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="worker_id" id="payWorkerId">
+          <p class="fw-semibold mb-3" id="payWorkerName"></p>
+          <div class="row g-3 mb-3">
+            <div class="col-8">
+              <label class="form-label">Month</label>
+              <select name="month" class="form-select">
+                {% for i in range(1, 13) %}
+                <option value="{{ i }}" {% if i == current_month %}selected{% endif %}>
+                  {{ months[i-1] }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-4">
+              <label class="form-label">Year</label>
+              <select name="year" class="form-select">
+                {% for y in years %}
+                <option value="{{ y }}" {% if y == current_year %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Amount (RM) <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text">RM</span>
+              <input type="number" name="amount" class="form-control" step="0.01" min="0.01" required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Note <span class="text-muted">(optional)</span></label>
+            <input type="text" name="note" class="form-control">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-check-circle me-1"></i>Confirm Pay
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Payment Modal -->
+<div class="modal fade no-print" id="editPaymentModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="post" id="editPaymentForm" action="">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Payment</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="fw-semibold text-muted mb-3" id="editPaymentLabel"></p>
+          <div class="mb-3">
+            <label class="form-label">Amount (RM) <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <span class="input-group-text">RM</span>
+              <input type="number" name="amount" id="editPaymentAmount"
+                     class="form-control" step="0.01" min="0.01" required>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Note</label>
+            <input type="text" name="note" id="editPaymentNote" class="form-control">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Edit Worker Modal — populate fields
+document.getElementById('editWorkerModal').addEventListener('show.bs.modal', function(e) {
+  const btn = e.relatedTarget;
+  document.getElementById('editWorkerName').value = btn.dataset.workerName;
+  document.getElementById('editWorkerPosition').value = btn.dataset.workerPosition;
+  document.getElementById('editWorkerPhone').value = btn.dataset.workerPhone;
+  document.getElementById('editWorkerForm').action = `/web/salary/workers/${btn.dataset.workerId}/edit`;
+});
+
+// Pay Modal — populate worker
+document.getElementById('payModal').addEventListener('show.bs.modal', function(e) {
+  const btn = e.relatedTarget;
+  document.getElementById('payWorkerId').value = btn.dataset.workerId;
+  document.getElementById('payWorkerName').textContent = btn.dataset.workerName;
+});
+
+// Edit Payment Modal — populate fields
+document.getElementById('editPaymentModal').addEventListener('show.bs.modal', function(e) {
+  const btn = e.relatedTarget;
+  document.getElementById('editPaymentLabel').textContent = btn.dataset.paymentLabel;
+  document.getElementById('editPaymentAmount').value = btn.dataset.paymentAmount;
+  document.getElementById('editPaymentNote').value = btn.dataset.paymentNote;
+  document.getElementById('editPaymentForm').action = `/web/salary/payments/${btn.dataset.paymentId}/edit`;
+});
+</script>
+{% endblock %}

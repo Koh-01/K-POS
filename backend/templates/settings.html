@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Settings — POS Admin{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-4">Settings</h4>
+
+{% if saved %}
+<div class="alert alert-success alert-dismissible fade show py-2" role="alert">
+  <i class="bi bi-check-circle me-1"></i>Settings saved successfully.
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<form method="post" action="/web/settings">
+  <!-- Store Info -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-transparent fw-semibold">
+      <i class="bi bi-shop me-2"></i>Store Information
+    </div>
+    <div class="card-body row g-3">
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Store Name</label>
+        <input name="store_name" type="text" class="form-control" value="{{ s.store_name }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Phone</label>
+        <input name="store_phone" type="text" class="form-control" value="{{ s.store_phone }}">
+      </div>
+      <div class="col-12">
+        <label class="form-label small fw-semibold">Address</label>
+        <input name="store_address" type="text" class="form-control" value="{{ s.store_address }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Email</label>
+        <input name="store_email" type="email" class="form-control" value="{{ s.store_email }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Tax Registration No.</label>
+        <input name="tax_registration_number" type="text" class="form-control" value="{{ s.tax_registration_number }}">
+      </div>
+    </div>
+  </div>
+
+  <!-- Tax & Charges -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-transparent fw-semibold">
+      <i class="bi bi-percent me-2"></i>Tax & Charges
+    </div>
+    <div class="card-body row g-3">
+      <div class="col-md-6">
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="sst_enabled" id="sstToggle"
+            {{ 'checked' if s.sst_enabled == '1' else '' }}>
+          <label class="form-check-label fw-semibold" for="sstToggle">Enable SST</label>
+        </div>
+        <label class="form-label small">SST Rate (decimal, e.g. 0.06 = 6%)</label>
+        <input name="sst_rate" type="number" step="0.001" class="form-control" value="{{ s.sst_rate or '0.06' }}">
+      </div>
+      <div class="col-md-6">
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="service_charge_enabled" id="scToggle"
+            {{ 'checked' if s.service_charge_enabled == '1' else '' }}>
+          <label class="form-check-label fw-semibold" for="scToggle">Enable Service Charge</label>
+        </div>
+        <label class="form-label small">Service Charge Rate (decimal, e.g. 0.10 = 10%)</label>
+        <input name="service_charge_rate" type="number" step="0.001" class="form-control" value="{{ s.service_charge_rate or '0.10' }}">
+      </div>
+    </div>
+  </div>
+
+  <!-- Receipt -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-transparent fw-semibold">
+      <i class="bi bi-receipt me-2"></i>Receipt
+    </div>
+    <div class="card-body row g-3">
+
+      <!-- Logo -->
+      <div class="col-12">
+        <label class="form-label small fw-semibold">Receipt Logo</label>
+        {% if s.store_logo_path %}
+        <div class="mb-2">
+          <img src="/{{ s.store_logo_path }}" height="64" class="border rounded"
+               onerror="this.style.display='none'">
+        </div>
+        {% endif %}
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" name="receipt_show_logo" id="showLogoToggle"
+            {{ 'checked' if s.receipt_show_logo == '1' else '' }}>
+          <label class="form-check-label small" for="showLogoToggle">Show logo on receipt</label>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                data-bs-toggle="modal" data-bs-target="#logoModal">
+          <i class="bi bi-image me-1"></i>{{ 'Replace Logo' if s.store_logo_path else 'Upload Logo' }}
+        </button>
+      </div>
+
+      <!-- Header -->
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Receipt Header</label>
+        <textarea name="receipt_header" class="form-control mb-2" rows="3"
+                  placeholder="e.g. store name, tagline">{{ s.receipt_header }}</textarea>
+        <div class="row g-2">
+          <div class="col">
+            <label class="form-label small text-muted mb-1">Font Size</label>
+            <select name="receipt_header_size" class="form-select form-select-sm">
+              <option value="0" {{ 'selected' if s.receipt_header_size == '0' }}>Small</option>
+              <option value="1" {{ 'selected' if s.receipt_header_size == '1' or not s.get('receipt_header_size') }}>Normal</option>
+              <option value="2" {{ 'selected' if s.receipt_header_size == '2' }}>Large</option>
+            </select>
+          </div>
+          <div class="col">
+            <label class="form-label small text-muted mb-1">Alignment</label>
+            <select name="receipt_header_align" class="form-select form-select-sm">
+              <option value="0" {{ 'selected' if s.receipt_header_align == '0' }}>Left</option>
+              <option value="1" {{ 'selected' if s.receipt_header_align == '1' or not s.get('receipt_header_align') }}>Center</option>
+              <option value="2" {{ 'selected' if s.receipt_header_align == '2' }}>Right</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">Receipt Footer</label>
+        <textarea name="receipt_footer" class="form-control mb-2" rows="3"
+                  placeholder="e.g. Thank you! Come again.">{{ s.receipt_footer }}</textarea>
+        <div class="row g-2">
+          <div class="col">
+            <label class="form-label small text-muted mb-1">Font Size</label>
+            <select name="receipt_footer_size" class="form-select form-select-sm">
+              <option value="0" {{ 'selected' if s.receipt_footer_size == '0' or not s.get('receipt_footer_size') }}>Small</option>
+              <option value="1" {{ 'selected' if s.receipt_footer_size == '1' }}>Normal</option>
+              <option value="2" {{ 'selected' if s.receipt_footer_size == '2' }}>Large</option>
+            </select>
+          </div>
+          <div class="col">
+            <label class="form-label small text-muted mb-1">Alignment</label>
+            <select name="receipt_footer_align" class="form-select form-select-sm">
+              <option value="0" {{ 'selected' if s.receipt_footer_align == '0' }}>Left</option>
+              <option value="1" {{ 'selected' if s.receipt_footer_align == '1' or not s.get('receipt_footer_align') }}>Center</option>
+              <option value="2" {{ 'selected' if s.receipt_footer_align == '2' }}>Right</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-floppy me-1"></i>Save Settings
+    </button>
+    <a href="/web/settings" class="btn btn-outline-secondary">Reset</a>
+  </div>
+</form>
+
+<!-- Logo Upload Modal -->
+<div class="modal fade" id="logoModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <form method="post" action="/web/settings/logo" enctype="multipart/form-data">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-image me-2"></i>Upload Receipt Logo</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small">Recommended: square image, max 300×300 px. JPEG / PNG / WebP.</p>
+          <input type="file" name="file" class="form-control" accept="image/jpeg,image/png,image/webp" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Upload</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

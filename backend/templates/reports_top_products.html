@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Top Products — POS Admin{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-4">Top Products</h4>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" action="/web/reports/top-products" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small fw-semibold mb-1">From</label>
+        <input type="date" name="start_date" class="form-control form-control-sm" value="{{ start_date }}">
+      </div>
+      <div class="col-auto">
+        <label class="form-label small fw-semibold mb-1">To</label>
+        <input type="date" name="end_date" class="form-control form-control-sm" value="{{ end_date }}">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>Filter</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% elif report and report.products %}
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-transparent fw-semibold">
+    Top 20 Products — {{ report.start_date }} to {{ report.end_date }}
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:50px">#</th>
+          <th>Product</th>
+          <th>Category</th>
+          <th class="text-end">Qty Sold</th>
+          <th class="text-end">Revenue (RM)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in report.products %}
+        <tr>
+          <td>
+            {% if loop.index <= 3 %}
+            <span class="badge {{ ['bg-warning text-dark','bg-secondary','bg-danger'][loop.index0] }}">{{ loop.index }}</span>
+            {% else %}
+            <span class="text-muted">{{ loop.index }}</span>
+            {% endif %}
+          </td>
+          <td class="fw-semibold">{{ p.product_name }}</td>
+          <td><span class="badge bg-light text-dark border">{{ p.category_name }}</span></td>
+          <td class="text-end">{{ p.total_qty }}</td>
+          <td class="text-end fw-semibold text-success">{{ "%.2f"|format(p.total_revenue|float) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="alert alert-info">No data for selected period.</div>
+{% endif %}
+{% endblock %}

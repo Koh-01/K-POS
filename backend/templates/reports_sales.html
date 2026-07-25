@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% block title %}Sales Report — POS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center mb-3 gap-2">
+  <h4 class="fw-bold mb-0 me-auto">Sales Report</h4>
+</div>
+
+<!-- Mode tabs -->
+<ul class="nav nav-pills mb-3" id="modeTabs">
+  <li class="nav-item">
+    <button class="nav-link active" data-mode="daily" onclick="setMode('daily',this)">
+      <i class="bi bi-calendar-day me-1"></i>Daily
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-mode="monthly" onclick="setMode('monthly',this)">
+      <i class="bi bi-calendar-month me-1"></i>Monthly
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-mode="yearly" onclick="setMode('yearly',this)">
+      <i class="bi bi-calendar3 me-1"></i>Yearly
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-mode="custom" onclick="setMode('custom',this)">
+      <i class="bi bi-calendar-range me-1"></i>Custom
+    </button>
+  </li>
+</ul>
+
+<!-- Period controls -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body py-2 px-3">
+
+    <!-- Daily -->
+    <div id="ctrl-daily" class="d-flex gap-2 align-items-center flex-wrap py-1">
+      <span class="text-muted small fw-semibold me-1">Last:</span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadDaily(1,this)">Today</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadDaily(7,this)">7 days</button>
+      <button class="btn btn-sm btn-primary active" id="daily-30" onclick="loadDaily(30,this)">30 days</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadDaily(90,this)">90 days</button>
+    </div>
+
+    <!-- Monthly -->
+    <div id="ctrl-monthly" class="d-none d-flex gap-2 align-items-center flex-wrap py-1">
+      <span class="text-muted small fw-semibold me-1">Year:</span>
+      {% for y in years %}
+      <button class="btn btn-sm {{ 'btn-primary' if y == current_year else 'btn-outline-secondary' }}"
+              onclick="loadMonthly({{ y }},this)">{{ y }}</button>
+      {% endfor %}
+    </div>
+
+    <!-- Yearly -->
+    <div id="ctrl-yearly" class="d-none py-1">
+      <span class="text-muted small">Showing all years on record</span>
+    </div>
+
+    <!-- Custom -->
+    <div id="ctrl-custom" class="d-none py-1">
+      <form class="row g-2 align-items-end" onsubmit="loadCustom(event)">
+        <div class="col-auto">
+          <label class="form-label small fw-semibold mb-1">From</label>
+          <input type="date" id="customStart" class="form-control form-control-sm" value="{{ today }}">
+        </div>
+        <div class="col-auto">
+          <label class="form-label small fw-semibold mb-1">To</label>
+          <input type="date" id="customEnd" class="form-control form-control-sm" value="{{ today }}">
+        </div>
+        <div class="col-auto">
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-search me-1"></i>Apply
+          </button>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+<!-- Stat cards -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <p class="text-muted small mb-1"><i class="bi bi-cash-coin me-1"></i>Total Revenue</p>
+        <div class="fs-3 fw-bold text-success" id="statRevenue">
+          <span class="spinner-border spinner-border-sm text-success" role="status"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <p class="text-muted small mb-1"><i class="bi bi-receipt me-1"></i>Total Orders</p>
+        <div class="fs-3 fw-bold text-primary" id="statOrders">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body">
+        <p class="text-muted small mb-1"><i class="bi bi-bar-chart me-1"></i>Avg per Order</p>
+        <div class="d-flex align-items-center gap-2">
+          <div class="fs-3 fw-bold text-info" id="statAvg">—</div>
+          <div id="statTrend" class="fs-4 fw-bold"></div>
+        </div>
+        <div id="statTrendLabel" class="text-muted small mt-1" style="font-size:11px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Chart -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-header bg-transparent d-flex align-items-center">
+    <span class="fw-semibold flex-grow-1" id="chartTitle">Revenue Chart</span>
+    <span class="text-muted small" id="chartSubtitle"></span>
+  </div>
+  <div class="card-body" style="min-height:240px">
+    <div id="chartSpinner" style="display:flex; justify-content:center; align-items:center; height:200px">
+      <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
+    </div>
+    <canvas id="salesChart" style="display:none; max-height:260px"></canvas>
+    <div id="chartEmpty" class="d-none text-center text-muted py-5">No data for this period</div>
+  </div>
+</div>
+
+<!-- Detail table -->
+<div class="card border-0 shadow-sm" id="tableCard" style="display:none">
+  <div class="card-header bg-transparent fw-semibold" id="tableTitle">Breakdown</div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th id="thPeriod">Period</th>
+          <th class="text-end">Revenue (RM)</th>
+          <th class="text-end">Orders</th>
+          <th class="text-end">Avg / Order (RM)</th>
+          <th class="text-end">vs Previous</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+      <tfoot class="table-light fw-bold" id="tableFoot"></tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+let currentMode = 'daily';
+let chartInstance = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtRM(n) {
+  return 'RM ' + Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function setMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('#modeTabs .nav-link').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  ['daily','monthly','yearly','custom'].forEach(m => {
+    document.getElementById('ctrl-' + m).classList.toggle('d-none', m !== mode);
+  });
+  if (mode === 'daily') loadDaily(30, document.getElementById('daily-30'));
+  else if (mode === 'monthly') loadMonthly({{ current_year }}, document.querySelector('#ctrl-monthly button.btn-primary'));
+  else if (mode === 'yearly') loadYearly();
+  // custom: wait for user to submit
+}
+
+function _setDailyActive(btn) {
+  document.querySelectorAll('#ctrl-daily button').forEach(b => {
+    b.classList.remove('btn-primary');
+    b.classList.add('btn-outline-secondary');
+  });
+  if (btn) { btn.classList.remove('btn-outline-secondary'); btn.classList.add('btn-primary'); }
+}
+
+function _setMonthlyActive(btn) {
+  document.querySelectorAll('#ctrl-monthly button').forEach(b => {
+    b.classList.remove('btn-primary');
+    b.classList.add('btn-outline-secondary');
+  });
+  if (btn) { btn.classList.remove('btn-outline-secondary'); btn.classList.add('btn-primary'); }
+}
+
+function loadDaily(days, btn) {
+  _setDailyActive(btn);
+  const end = new Date();
+  const start = new Date(end.getTime() - (days - 1) * 86400000);
+  const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  fetchAndRender(`/web/reports/daily-json?start_date=${fmt(start)}&end_date=${fmt(end)}`, 'Date', 'Daily Revenue', days === 1 ? "Today" : `Last ${days} days`);
+}
+
+function loadMonthly(year, btn) {
+  _setMonthlyActive(btn);
+  fetchAndRender(`/web/reports/monthly-json?year=${year}`, 'Month', `${year} Monthly Revenue`, `${year}`);
+}
+
+function loadYearly() {
+  fetchAndRender('/web/reports/yearly-json', 'Year', 'Year-over-Year Revenue', 'All Years');
+}
+
+function loadCustom(e) {
+  e.preventDefault();
+  const start = document.getElementById('customStart').value;
+  const end = document.getElementById('customEnd').value;
+  if (!start || !end) return;
+  fetchAndRender(`/web/reports/daily-json?start_date=${start}&end_date=${end}`, 'Date', 'Custom Period Revenue', `${start} → ${end}`);
+}
+
+// ── Fetch + Render ────────────────────────────────────────────────────────────
+async function fetchAndRender(url, periodLabel, chartTitle, subtitle) {
+  document.getElementById('chartSpinner').style.display = 'flex';
+  document.getElementById('salesChart').style.display = 'none';
+  document.getElementById('chartEmpty').classList.add('d-none');
+  document.getElementById('tableCard').style.display = 'none';
+  document.getElementById('statRevenue').innerHTML = '<span class="spinner-border spinner-border-sm text-success"></span>';
+  document.getElementById('statOrders').textContent = '—';
+  document.getElementById('statAvg').textContent = '—';
+  document.getElementById('statTrend').textContent = '';
+  document.getElementById('statTrendLabel').textContent = '';
+  document.getElementById('chartTitle').textContent = chartTitle;
+  document.getElementById('chartSubtitle').textContent = subtitle || '';
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    renderData(data, periodLabel);
+  } catch (err) {
+    document.getElementById('chartSpinner').innerHTML = `<p class="text-danger small">Error loading data: ${err.message}</p>`;
+  }
+}
+
+function renderData(data, periodLabel) {
+  const breakdown = data.breakdown || [];
+  const totalRevenue = data.total_revenue || 0;
+  const totalOrders = data.total_orders || 0;
+  const avg = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+  // ── Stat cards ─────────────────────────────────────────────────────────────
+  document.getElementById('statRevenue').textContent = fmtRM(totalRevenue);
+  document.getElementById('statOrders').textContent = totalOrders.toLocaleString();
+  document.getElementById('statAvg').textContent = fmtRM(avg);
+
+  // ── Trend (first half avg vs second half avg) ──────────────────────────────
+  const trendEl = document.getElementById('statTrend');
+  const trendLabel = document.getElementById('statTrendLabel');
+  if (breakdown.length >= 3) {
+    const half = Math.floor(breakdown.length / 2);
+    const calcAvg = arr => {
+      const valid = arr.filter(d => d.orders > 0);
+      if (!valid.length) return 0;
+      return valid.reduce((s, d) => s + d.revenue / d.orders, 0) / valid.length;
+    };
+    const firstAvg = calcAvg(breakdown.slice(0, half));
+    const secondAvg = calcAvg(breakdown.slice(half));
+    const pct = firstAvg > 0 ? ((secondAvg - firstAvg) / firstAvg * 100).toFixed(1) : 0;
+
+    if (secondAvg > firstAvg * 1.02) {
+      trendEl.innerHTML = '<span class="text-success">↑</span>';
+      trendLabel.innerHTML = `<span class="text-success">+${pct}%</span> avg/order trending up`;
+    } else if (secondAvg < firstAvg * 0.98) {
+      trendEl.innerHTML = '<span class="text-danger">↓</span>';
+      trendLabel.innerHTML = `<span class="text-danger">${pct}%</span> avg/order trending down`;
+    } else {
+      trendEl.innerHTML = '<span class="text-secondary">→</span>';
+      trendLabel.textContent = 'Avg/order stable';
+    }
+  }
+
+  // ── Chart ──────────────────────────────────────────────────────────────────
+  document.getElementById('chartSpinner').style.display = 'none';
+
+  if (!breakdown.length) {
+    document.getElementById('chartEmpty').classList.remove('d-none');
+    document.getElementById('tableCard').style.display = 'none';
+    return;
+  }
+
+  const canvas = document.getElementById('salesChart');
+  canvas.style.display = '';
+
+  if (chartInstance) chartInstance.destroy();
+
+  const labels = breakdown.map(d => d.label);
+  const revenues = breakdown.map(d => d.revenue);
+  const orders = breakdown.map(d => d.orders);
+  const avgs = breakdown.map(d => d.orders > 0 ? +(d.revenue / d.orders).toFixed(2) : 0);
+
+  chartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Revenue (RM)',
+          data: revenues,
+          backgroundColor: 'rgba(16,185,129,0.75)',
+          borderColor: 'rgba(16,185,129,1)',
+          borderWidth: 1,
+          borderRadius: 4,
+          yAxisID: 'yRev',
+          order: 2,
+        },
+        {
+          label: 'Orders',
+          data: orders,
+          type: 'line',
+          borderColor: 'rgba(30,111,217,0.9)',
+          backgroundColor: 'rgba(30,111,217,0.08)',
+          pointBackgroundColor: 'rgba(30,111,217,0.9)',
+          borderWidth: 2,
+          pointRadius: breakdown.length > 30 ? 2 : 4,
+          tension: 0.35,
+          fill: false,
+          yAxisID: 'yOrders',
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.datasetIndex === 0
+              ? ` Revenue: ${fmtRM(ctx.raw)}`
+              : ` Orders: ${ctx.raw}`,
+          },
+        },
+      },
+      scales: {
+        yRev: {
+          type: 'linear',
+          position: 'left',
+          ticks: { callback: v => 'RM ' + (v >= 1000 ? (v/1000).toFixed(1)+'k' : v) },
+          grid: { color: 'rgba(0,0,0,0.05)' },
+        },
+        yOrders: {
+          type: 'linear',
+          position: 'right',
+          ticks: { stepSize: 1, color: 'rgba(30,111,217,0.7)' },
+          grid: { drawOnChartArea: false },
+        },
+        x: {
+          ticks: {
+            maxTicksLimit: 12,
+            maxRotation: 45,
+            color: '#666',
+            font: { size: 11 },
+          },
+        },
+      },
+    },
+  });
+
+  // ── Table ──────────────────────────────────────────────────────────────────
+  document.getElementById('thPeriod').textContent = periodLabel;
+  document.getElementById('tableTitle').textContent = periodLabel + 'ly Breakdown';
+  const tbody = document.getElementById('tableBody');
+  const tfoot = document.getElementById('tableFoot');
+
+  tbody.innerHTML = breakdown.map((d, i) => {
+    const rowAvg = d.orders > 0 ? (d.revenue / d.orders) : null;
+    const prev = i > 0 ? breakdown[i-1] : null;
+    let vsHtml = '—';
+    if (prev && prev.revenue > 0) {
+      const pct = ((d.revenue - prev.revenue) / prev.revenue * 100).toFixed(1);
+      vsHtml = pct >= 0
+        ? `<span class="text-success small">+${pct}%</span>`
+        : `<span class="text-danger small">${pct}%</span>`;
+    }
+    return `<tr>
+      <td>${d.label}</td>
+      <td class="text-end fw-semibold">${d.revenue.toFixed(2)}</td>
+      <td class="text-end">${d.orders}</td>
+      <td class="text-end text-muted">${rowAvg !== null ? rowAvg.toFixed(2) : '—'}</td>
+      <td class="text-end">${vsHtml}</td>
+    </tr>`;
+  }).join('');
+
+  tfoot.innerHTML = `<tr>
+    <td>Total</td>
+    <td class="text-end">${totalRevenue.toFixed(2)}</td>
+    <td class="text-end">${totalOrders}</td>
+    <td class="text-end">${avg > 0 ? avg.toFixed(2) : '—'}</td>
+    <td></td>
+  </tr>`;
+
+  document.getElementById('tableCard').style.display = '';
+}
+
+// ── Initial load ──────────────────────────────────────────────────────────────
+loadDaily(30, document.getElementById('daily-30'));
+</script>
+{% endblock %}

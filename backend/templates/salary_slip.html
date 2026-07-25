@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Salary Slip — {{ worker_name }}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      background: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      padding: 40px 16px;
+    }
+    .slip {
+      background: white;
+      width: 320px;
+      padding: 24px 20px 32px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .store-name {
+      text-align: center;
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    .slip-title {
+      text-align: center;
+      font-size: 13px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      margin-bottom: 2px;
+    }
+    .slip-month {
+      text-align: center;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    hr { border: none; border-top: 1px dashed #999; margin: 10px 0; }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin: 4px 0;
+    }
+    .amount-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 15px;
+      font-weight: bold;
+      margin: 6px 0;
+    }
+    .note { font-size: 12px; color: #555; margin-top: 4px; }
+    .section { margin-top: 14px; }
+    .label { font-size: 12px; color: #555; }
+    .sig-line {
+      border-bottom: 1px solid #333;
+      margin-top: 28px;
+      margin-bottom: 4px;
+      width: 70%;
+    }
+    .printed { font-size: 10px; color: #999; margin-top: 14px; }
+    .print-btn {
+      display: flex;
+      justify-content: center;
+      margin-top: 24px;
+    }
+    button {
+      padding: 8px 28px;
+      background: #1e6fd9;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    @media print {
+      body { background: white; padding: 0; }
+      .slip { border: none; width: 100%; }
+      .print-btn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <div class="slip">
+      <div class="store-name">{{ store_name }}</div>
+      <br>
+      <div class="slip-title">** SALARY SLIP **</div>
+      <div class="slip-month">{{ month_name }} {{ year }}</div>
+      <hr>
+      <div class="row"><span>Name</span><span>{{ worker_name }}</span></div>
+      {% if position %}<div class="row"><span>Position</span><span>{{ position }}</span></div>{% endif %}
+      <hr>
+      <div class="amount-row"><span>Salary</span><span>RM {{ '%.2f'|format(amount|float) }}</span></div>
+      {% if note %}<div class="note">Note: {{ note }}</div>{% endif %}
+      <hr>
+      <div class="section">
+        <div class="label">Received by:</div>
+        <div class="sig-line"></div>
+        <div class="label">Signature</div>
+      </div>
+      <div class="printed">Printed: {{ printed_at }}</div>
+    </div>
+    <div class="print-btn">
+      <button onclick="window.print()">🖨 Print</button>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Annual Report — POS Admin{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-4">Annual Report</h4>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex align-items-end gap-3 flex-wrap">
+      <form method="get" action="/web/reports/annual" class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small fw-semibold mb-1">Year</label>
+          <select name="year" class="form-select form-select-sm" onchange="this.form.submit()">
+            {% for y in years %}
+            <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
+      <a href="/web/reports/annual/export?year={{ year }}" class="btn btn-success btn-sm">
+        <i class="bi bi-download me-1"></i>Download CSV ({{ year }})
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <p class="text-muted small mb-1">Total Revenue {{ year }}</p>
+        <div class="fs-4 fw-bold text-success">RM {{ "%.2f"|format(total_revenue) }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-md-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <p class="text-muted small mb-1">Total Orders {{ year }}</p>
+        <div class="fs-4 fw-bold text-primary">{{ total_orders }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-header bg-transparent fw-semibold">Monthly Breakdown — {{ year }}</div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Month</th>
+          <th class="text-end">Revenue (RM)</th>
+          <th class="text-end">Orders</th>
+          <th class="text-end">Avg (RM)</th>
+          <th>Share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in monthly %}
+        <tr>
+          <td>{{ row.month }}</td>
+          <td class="text-end fw-semibold">{{ "%.2f"|format(row.revenue) }}</td>
+          <td class="text-end">{{ row.orders }}</td>
+          <td class="text-end text-muted">
+            {% if row.orders > 0 %}{{ "%.2f"|format(row.revenue / row.orders) }}{% else %}—{% endif %}
+          </td>
+          <td style="width:180px">
+            {% if total_revenue > 0 %}
+            {% set pct = (row.revenue / total_revenue * 100)|round(1) %}
+            <div class="d-flex align-items-center gap-2">
+              <div class="progress flex-grow-1" style="height:6px">
+                <div class="progress-bar bg-success" style="width:{{ pct }}%"></div>
+              </div>
+              <small class="text-muted">{{ pct }}%</small>
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">No data for {{ year }}</td></tr>
+        {% endfor %}
+      </tbody>
+      {% if monthly %}
+      <tfoot class="table-light fw-bold">
+        <tr>
+          <td>Total</td>
+          <td class="text-end">{{ "%.2f"|format(total_revenue) }}</td>
+          <td class="text-end">{{ total_orders }}</td>
+          <td></td><td></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

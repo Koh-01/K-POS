@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} — POS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="/web/promotions" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back
+  </a>
+  <h4 class="fw-bold mb-0">{{ page_title }}</h4>
+</div>
+
+<div class="card border-0 shadow-sm" style="max-width:680px">
+  <div class="card-body p-4">
+    <form method="post" action="{{ form_action }}">
+
+      <!-- Name -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Name <span class="text-danger">*</span></label>
+        <input type="text" name="name" class="form-control" value="{{ promo.name if promo else '' }}" required>
+      </div>
+
+      <!-- Type -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Type <span class="text-danger">*</span></label>
+        <select name="type" id="promo-type" class="form-select" onchange="onTypeChange(this.value)">
+          <option value="discount_pct" {{ 'selected' if promo and promo.type == 'discount_pct' else '' }}>Discount %</option>
+          <option value="b1f1"         {{ 'selected' if promo and promo.type == 'b1f1' else '' }}>Buy 1 Free 1</option>
+          <option value="happy_hour"   {{ 'selected' if promo and promo.type == 'happy_hour' else '' }}>Happy Hour</option>
+          <option value="promo_code"   {{ 'selected' if promo and promo.type == 'promo_code' else '' }}>Promo Code</option>
+        </select>
+      </div>
+
+      <!-- ── Conditions: discount_pct ───────────────────────────── -->
+      <div id="cond-discount_pct" class="conditions-section border rounded p-3 mb-3 bg-light">
+        <p class="fw-semibold small text-muted mb-2">Conditions — Discount %</p>
+        <div class="mb-2">
+          <label class="form-label small">Discount Percent</label>
+          <input type="number" name="conditions_percent" id="dp-percent"
+                 class="form-control form-control-sm" step="0.01" min="0" max="100"
+                 value="{{ promo.conditions.get('percent', '') if promo and promo.type == 'discount_pct' else '' }}">
+        </div>
+      </div>
+
+      <!-- ── Conditions: b1f1 ───────────────────────────────────── -->
+      <div id="cond-b1f1" class="conditions-section border rounded p-3 mb-3 bg-light" style="display:none">
+        <p class="fw-semibold small text-muted mb-2">Conditions — Buy 1 Free 1</p>
+        <div class="mb-2">
+          <label class="form-label small">Free Product</label>
+          <select name="conditions_product_id" id="b1f1-product" class="form-select form-select-sm">
+            <option value="">— Select product —</option>
+            {% for prod in products %}
+            <option value="{{ prod.id }}"
+              {{ 'selected' if promo and promo.type == 'b1f1' and promo.conditions.get('product_id') == prod.id else '' }}>
+              {{ prod.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <!-- ── Conditions: happy_hour ─────────────────────────────── -->
+      <div id="cond-happy_hour" class="conditions-section border rounded p-3 mb-3 bg-light" style="display:none">
+        <p class="fw-semibold small text-muted mb-2">Conditions — Happy Hour</p>
+        <div class="row g-2">
+          <div class="col-md-4">
+            <label class="form-label small">Discount Percent</label>
+            <input type="number" name="conditions_percent" id="hh-percent"
+                   class="form-control form-control-sm" step="0.01" min="0" max="100"
+                   value="{{ promo.conditions.get('percent', '') if promo and promo.type == 'happy_hour' else '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small">Start Time</label>
+            <input type="time" name="conditions_start_time" id="hh-start"
+                   class="form-control form-control-sm"
+                   value="{{ promo.conditions.get('start_time', '') if promo and promo.type == 'happy_hour' else '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small">End Time</label>
+            <input type="time" name="conditions_end_time" id="hh-end"
+                   class="form-control form-control-sm"
+                   value="{{ promo.conditions.get('end_time', '') if promo and promo.type == 'happy_hour' else '' }}">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Conditions: promo_code ─────────────────────────────── -->
+      <div id="cond-promo_code" class="conditions-section border rounded p-3 mb-3 bg-light" style="display:none">
+        <p class="fw-semibold small text-muted mb-2">Conditions — Promo Code</p>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label small">Code</label>
+            <input type="text" name="conditions_code" id="pc-code"
+                   class="form-control form-control-sm" placeholder="e.g. SAVE10"
+                   value="{{ promo.conditions.get('code', '') if promo and promo.type == 'promo_code' else '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Discount Percent</label>
+            <input type="number" name="conditions_percent" id="pc-percent"
+                   class="form-control form-control-sm" step="0.01" min="0" max="100"
+                   value="{{ promo.conditions.get('percent', '') if promo and promo.type == 'promo_code' else '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Usage Limit <span class="text-muted">(0 = unlimited)</span></label>
+            <input type="number" name="conditions_usage_limit" id="pc-usage"
+                   class="form-control form-control-sm" min="0"
+                   value="{{ promo.conditions.get('usage_limit', 0) if promo and promo.type == 'promo_code' else 0 }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Min Order (RM) <span class="text-muted">(0 = no min)</span></label>
+            <input type="number" name="conditions_min_order" id="pc-min-order"
+                   class="form-control form-control-sm" step="0.01" min="0"
+                   value="{{ promo.conditions.get('min_order', 0) if promo and promo.type == 'promo_code' else 0 }}">
+          </div>
+        </div>
+      </div>
+
+      <!-- Dates -->
+      <div class="row g-3 mb-3">
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Starts At <span class="text-muted small">(optional)</span></label>
+          <input type="datetime-local" name="starts_at" class="form-control"
+                 value="{{ promo.starts_at.strftime('%Y-%m-%dT%H:%M') if promo and promo.starts_at else '' }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">Ends At <span class="text-muted small">(optional)</span></label>
+          <input type="datetime-local" name="ends_at" class="form-control"
+                 value="{{ promo.ends_at.strftime('%Y-%m-%dT%H:%M') if promo and promo.ends_at else '' }}">
+        </div>
+      </div>
+
+      <!-- is_active -->
+      <div class="mb-4 form-check">
+        <input type="checkbox" name="is_active" id="is-active" class="form-check-input" value="1"
+               {{ 'checked' if (promo is none or promo.is_active) else '' }}>
+        <label class="form-check-label fw-semibold" for="is-active">Active</label>
+      </div>
+
+      <!-- Buttons -->
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-check-lg me-1"></i>{{ 'Save Changes' if promo else 'Create Promotion' }}
+        </button>
+        <a href="/web/promotions" class="btn btn-secondary">Cancel</a>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+var PROMO_TYPES = ['discount_pct', 'b1f1', 'happy_hour', 'promo_code'];
+
+function onTypeChange(val) {
+  PROMO_TYPES.forEach(function(t) {
+    var el = document.getElementById('cond-' + t);
+    if (el) el.style.display = (t === val) ? '' : 'none';
+  });
+}
+
+// Run on page load with current value
+(function() {
+  var sel = document.getElementById('promo-type');
+  if (sel) onTypeChange(sel.value);
+})();
+</script>
+{% endblock %}

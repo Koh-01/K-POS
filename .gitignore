@@ -1,0 +1,43 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+backend/gdrive_credentials.json
+backend/oauth_client_secret.json
+backend/token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+venv_windows_backup/
+backend/venv/
+backend/venv_windows_backup/
+
+# Backend runtime data
+backend/backups/
+backend/static/images/*
+!backend/static/images/.gitkeep
+
+# Flutter / Dart
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/**/build/
+app/.pub-cache/
+app/.pub/
+**/generated_plugin_registrant.dart
+*.iml
+app/android/local.properties
+app/android/key.properties
+*.jks
+*.keystore
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
