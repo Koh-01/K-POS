@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart' as dio;
@@ -7,11 +7,13 @@ import '../../../core/api/api_client.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
 
-final _annualReportProvider =
-    FutureProvider.family.autoDispose<Map<String, dynamic>, int>((ref, year) async {
-  final res = await ApiClient.instance.get('/reports/sales/annual?year=$year');
-  return res.data as Map<String, dynamic>;
-});
+final _annualReportProvider = FutureProvider.family
+    .autoDispose<Map<String, dynamic>, int>((ref, year) async {
+      final res = await ApiClient.instance.get(
+        '/reports/sales/annual?year=$year',
+      );
+      return res.data as Map<String, dynamic>;
+    });
 
 class AnnualReportScreen extends ConsumerStatefulWidget {
   const AnnualReportScreen({super.key});
@@ -24,8 +26,18 @@ class _AnnualReportScreenState extends ConsumerState<AnnualReportScreen> {
   int _year = DateTime.now().year;
 
   static const _monthNames = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   String _monthLabel(String month) {
@@ -49,16 +61,25 @@ class _AnnualReportScreenState extends ConsumerState<AnnualReportScreen> {
       final file = File('${dir.path}/annual_tax_report_$_year.csv');
       await file.writeAsBytes(res.data as List<int>);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Saved to ${file.path}'),
-          duration: const Duration(seconds: 4),
-        ));
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Saved to ${file.path}'),
+              duration: const Duration(seconds: 4),
+            ),
+          );
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(friendlyError(e)),
+              backgroundColor: Colors.red,
+            ),
+          );
       }
     }
   }
@@ -95,7 +116,10 @@ class _AnnualReportScreenState extends ConsumerState<AnnualReportScreen> {
                 ),
                 Text(
                   '$_year',
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.chevron_right),
@@ -111,8 +135,9 @@ class _AnnualReportScreenState extends ConsumerState<AnnualReportScreen> {
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text(loadError(e))),
               data: (data) {
-                final total =
-                    data['total_revenue'] != null ? double.parse(data['total_revenue'].toString()) : 0.0;
+                final total = data['total_revenue'] != null
+                    ? double.parse(data['total_revenue'].toString())
+                    : 0.0;
                 final orders = data['total_orders'] as int? ?? 0;
                 final rows =
                     (data['monthly_breakdown'] as List<dynamic>?) ?? [];
@@ -150,26 +175,29 @@ class _AnnualReportScreenState extends ConsumerState<AnnualReportScreen> {
                                   const Divider(height: 1),
                               itemBuilder: (ctx, i) {
                                 final row = rows[i] as Map<String, dynamic>;
-                                final monthStr =
-                                    row['month'] as String? ?? '';
+                                final monthStr = row['month'] as String? ?? '';
                                 return ListTile(
                                   title: Text(_monthLabel(monthStr)),
                                   trailing: Column(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.end,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text(
-                                        formatRM(double.parse(row['revenue'].toString())),
+                                        formatRM(
+                                          double.parse(
+                                            row['revenue'].toString(),
+                                          ),
+                                        ),
                                         style: const TextStyle(
-                                            fontWeight: FontWeight.bold),
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                       Text(
                                         '${row['orders'] ?? 0} orders',
                                         style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey.shade600),
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -193,27 +221,34 @@ class _SummaryCard extends StatelessWidget {
   final String value;
   final Color color;
 
-  const _SummaryCard(
-      {required this.label, required this.value, required this.color});
+  const _SummaryCard({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style:
-                      TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-              const SizedBox(height: 4),
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: color)),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
-        ),
-      );
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -20,15 +20,15 @@ class CashRecord {
   });
 
   factory CashRecord.fromJson(Map<String, dynamic> json) => CashRecord(
-        id: json['id'] as int,
-        type: json['type'] as String,
-        amount: double.parse(json['amount'].toString()),
-        description: json['description'] as String? ?? '',
-        category: json['category'] as String?,
-        reference: json['reference'] as String?,
-        receiptImagePath: json['receipt_image_path'] as String?,
-        createdAt: DateTime.parse(json['created_at'] as String),
-      );
+    id: json['id'] as int,
+    type: json['type'] as String,
+    amount: double.parse(json['amount'].toString()),
+    description: json['description'] as String? ?? '',
+    category: json['category'] as String?,
+    reference: json['reference'] as String?,
+    receiptImagePath: json['receipt_image_path'] as String?,
+    createdAt: DateTime.parse(json['created_at'] as String),
+  );
 
   bool get isCashIn => type == 'cash_in';
 }

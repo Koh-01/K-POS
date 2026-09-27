@@ -1,27 +1,29 @@
+import 'dart:async';
 import 'dart:convert';
-import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 import '../providers/payment_provider.dart';
 import '../../../core/api/api_client.dart';
+import '../../../core/api/api_exception.dart';
 import '../../../core/db/local_db.dart';
 import '../../../core/models/order.dart';
-import '../../../core/models/order_item.dart';
 import '../../../core/models/payment.dart';
-import '../../../core/models/store_settings.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../cashier/providers/cashier_provider.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../settings/providers/settings_provider.dart';
 import '../services/receipt_printer.dart';
-import 'receipt_screen.dart';
 
 class PaymentScreen extends ConsumerStatefulWidget {
   final int orderId;
   final int? promotionId;
   final String? promoCode;
+
   /// Non-null when operating in offline mode (order has no server ID yet).
   final Order? offlineOrder;
   const PaymentScreen({
@@ -53,6 +55,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   bool _hasPrinted = false;
   bool _printing = false;
   bool _printingBill = false;
+  bool _paymentPendingSync = false;
+
+  // True when this order already has a real server ID but couldn't be
+  // reached over the network — we fell back to the local open-orders cache
+  // and need to queue the payment instead of posting it directly.
+  bool _offlineRealOrder = false;
 
   @override
   void initState() {
@@ -62,7 +70,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     _loadError = null;
     _order = null;
     _summary = null;
-    _cashCtrl.addListener(() { if (mounted) setState(() {}); });
+    _cashCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _load();
     });
@@ -74,32 +84,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     super.dispose();
   }
 
-  bool get _isOffline => widget.offlineOrder != null;
+  bool get _isOffline => widget.offlineOrder != null || _offlineRealOrder;
 
   // ── Offline helpers ──────────────────────────────────────────────────────────
-
-  CheckoutSummary _calcOffline(
-      List<OrderItem> items, StoreSettings settings) {
-    final subtotal = double.parse(
-        items.fold(0.0, (s, i) => s + i.subtotal).toStringAsFixed(2));
-    final sc = settings.enableServiceCharge
-        ? double.parse(
-            (subtotal * settings.serviceChargeRate).toStringAsFixed(2))
-        : 0.0;
-    final sst = settings.enableSst
-        ? double.parse(
-            ((subtotal + sc) * settings.sstRate).toStringAsFixed(2))
-        : 0.0;
-    final grand =
-        double.parse((subtotal + sc + sst).toStringAsFixed(2));
-    return CheckoutSummary(
-      subtotal: subtotal,
-      serviceCharge: sc,
-      sst: sst,
-      discount: 0,
-      grandTotal: grand,
-    );
-  }
 
   // ── Loaders ─────────────────────────────────────────────────────────────────
 
@@ -111,9 +98,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
 
     // Offline mode: compute totals locally from cached settings
     if (_isOffline) {
-      final settings =
-          ref.read(settingsProvider).value ?? StoreSettings.defaults;
-      final summary = _calcOffline(widget.offlineOrder!.items, settings);
+      final settings = await ref.read(settingsProvider.future);
+      final summary = calculateOfflineCheckout(
+        widget.offlineOrder!.items,
+        settings,
+      );
       if (mounted) {
         setState(() {
           _order = widget.offlineOrder;
@@ -141,6 +130,31 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         _loading = false;
       });
     } catch (e) {
+      if (!ApiException.isOfflineFailure(e)) {
+        if (!mounted) return;
+        setState(() {
+          _loadError = friendlyError(e);
+          _loading = false;
+        });
+        return;
+      }
+      // Network unreachable: this order already synced before we lost
+      // connectivity, so it should still be sitting in the local
+      // open-orders cache — fall back to it and switch to offline-pay mode
+      // instead of just showing an error the cashier can't act on.
+      final cached = await LocalDb.getCachedOrderById(widget.orderId);
+      if (cached != null) {
+        final settings = await ref.read(settingsProvider.future);
+        final summary = calculateOfflineCheckout(cached.items, settings);
+        if (!mounted) return;
+        setState(() {
+          _order = cached;
+          _summary = summary;
+          _offlineRealOrder = true;
+          _loading = false;
+        });
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _loadError = e.toString();
@@ -162,8 +176,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       final body = <String, dynamic>{'order_id': widget.orderId};
       if (promotionId != null) body['promotion_id'] = promotionId;
       if (promoCode?.isNotEmpty ?? false) body['promo_code'] = promoCode;
-      final pr =
-          await ApiClient.instance.post('/promotions/apply', data: body);
+      final pr = await ApiClient.instance.post('/promotions/apply', data: body);
       final pd = pr.data as Map<String, dynamic>;
       discountPct = double.parse(pd['discount_percent'].toString());
       discountAmt = double.parse(pd['discount_amount'].toString());
@@ -183,8 +196,11 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     return CheckoutSummary(
       subtotal: double.parse(d['subtotal'].toString()),
       serviceCharge: double.parse(d['service_charge_amount'].toString()),
+      serviceChargeRate: double.parse(d['service_charge_rate'].toString()),
       sst: double.parse(d['sst_amount'].toString()),
+      sstRate: double.parse(d['sst_rate'].toString()),
       discount: double.parse(d['discount_amount'].toString()),
+      discountPercent: double.parse(d['discount_percent'].toString()),
       grandTotal: double.parse(d['grand_total'].toString()),
       promotionId: resolvedPromoId,
       promoCode: resolvedCode,
@@ -196,73 +212,142 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   String _checkoutTitle() {
     final order = _order;
     if (order == null) return 'Checkout';
-    if (order.orderType == 'takeaway') return 'Takeaway — Checkout';
+    if (order.orderType == OrderTypes.takeAway) return 'Takeaway — Checkout';
     final name = order.tableName ?? '';
     return name.isNotEmpty ? '$name — Checkout' : 'Checkout';
   }
 
   // ── Payment ─────────────────────────────────────────────────────────────────
 
+  Future<void> _queueOfflinePayment({
+    required String offlineRef,
+    required Order order,
+    required CheckoutSummary summary,
+    required double cashReceived,
+  }) async {
+    final knownServerOrder = order.id != null;
+    final change = _method == 'cash' ? cashReceived - summary.grandTotal : 0.0;
+
+    await LocalDb.savePendingPayment({
+      'offline_ref': offlineRef,
+      'order_offline_ref': order.offlineRef ?? '',
+      if (knownServerOrder) 'order_id': order.id,
+      'payment_method': _method,
+      if (summary.promotionId != null) 'promotion_id': summary.promotionId,
+      'subtotal': summary.subtotal,
+      'discount_percent': summary.discountPercent,
+      'discount_amount': summary.discount,
+      'service_charge_rate': summary.serviceChargeRate,
+      'service_charge_amount': summary.serviceCharge,
+      'sst_rate': summary.sstRate,
+      'sst_amount': summary.sst,
+      'grand_total': summary.grandTotal,
+      if (_method == 'cash') 'cash_tendered': cashReceived,
+      if (_method == 'cash') 'change_amount': change,
+      'items_json': jsonEncode(
+        order.items
+            .map(
+              (i) => {
+                'product_id': i.productId,
+                'quantity': i.quantity,
+                'unit_price': i.unitPrice,
+                if (i.weight != null) 'weight_kg': i.weight,
+              },
+            )
+            .toList(),
+      ),
+      'table_name': order.tableName,
+      'order_type': order.orderType,
+      'created_at': DateTime.now().toIso8601String(),
+      'synced': 0,
+      'retry_count': 0,
+    });
+
+    if (knownServerOrder) {
+      await LocalDb.removeCachedOpenOrder(order.id!);
+    } else if (order.offlineRef != null) {
+      await LocalDb.markOrderPaidLocally(order.offlineRef!);
+    }
+    ref.read(cartProvider.notifier).clear();
+    ref.invalidate(openOrdersProvider);
+    ref.invalidate(pendingSyncCountProvider);
+    if (!mounted) return;
+    setState(() {
+      _paymentPendingSync = true;
+      _completedPayment = Payment(
+        id: -1,
+        orderId: order.id ?? -1,
+        offlineRef: offlineRef,
+        paymentMethod: _method,
+        subtotal: summary.subtotal,
+        serviceCharge: summary.serviceCharge,
+        sst: summary.sst,
+        discount: summary.discount,
+        grandTotal: summary.grandTotal,
+        cashReceived: _method == 'cash' ? cashReceived : null,
+        changeGiven: _method == 'cash' ? change : null,
+        isVoided: false,
+        createdAt: DateTime.now(),
+      );
+    });
+  }
+
   Future<void> _pay() async {
     final summary = _summary!;
+    final paymentOfflineRef = const Uuid().v4();
     final cashReceived = _method == 'cash'
         ? (double.tryParse(_cashCtrl.text.trim()) ?? summary.grandTotal)
         : summary.grandTotal;
 
+    if (_method == 'cash' && cashReceived < summary.grandTotal) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Cash received is less than the total.'),
+          ),
+        );
+      return;
+    }
+
     setState(() => _paying = true);
     try {
-      // ── Offline payment ─────────────────────────────────────────────────────
-      if (_isOffline) {
-        final offlineOrder = widget.offlineOrder!;
-        final change = _method == 'cash'
-            ? (cashReceived - summary.grandTotal).clamp(0.0, double.infinity)
-            : 0.0;
-        await LocalDb.savePendingPayment({
-          'offline_ref': const Uuid().v4(),
-          'order_offline_ref': offlineOrder.offlineRef ?? '',
-          'payment_method': _method,
-          'subtotal': summary.subtotal,
-          'discount_amount': summary.discount,
-          'service_charge_amount': summary.serviceCharge,
-          'sst_amount': summary.sst,
-          'grand_total': summary.grandTotal,
-          if (_method == 'cash') 'cash_tendered': cashReceived,
-          if (_method == 'cash') 'change_amount': change,
-          'items_json': jsonEncode(offlineOrder.items
-              .map((i) => {
-                    'product_id': i.productId,
-                    'quantity': i.quantity,
-                    if (i.weight != null) 'weight_kg': i.weight,
-                  })
-              .toList()),
-          'table_name': offlineOrder.tableName,
-          'order_type': offlineOrder.orderType,
-          'created_at': DateTime.now().toIso8601String(),
-          'synced': 0,
-        });
-        ref.read(cartProvider.notifier).clear();
-        ref.invalidate(openOrdersProvider);
-        if (!mounted) return;
-        setState(() => _completedPayment = Payment(
-              id: -1,
-              orderId: -1,
-              paymentMethod: _method,
-              subtotal: summary.subtotal,
-              serviceCharge: summary.serviceCharge,
-              sst: summary.sst,
-              discount: summary.discount,
-              grandTotal: summary.grandTotal,
-              cashReceived: _method == 'cash' ? cashReceived : null,
-              changeGiven: _method == 'cash' ? change : null,
-              isVoided: false,
-              createdAt: DateTime.now(),
-            ));
+      final localFirst =
+          !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+      // Android checkout is local-first even while online. The cashier only
+      // waits for the durable SQLite write; network upload runs independently.
+      if (localFirst || _isOffline) {
+        await _queueOfflinePayment(
+          offlineRef: paymentOfflineRef,
+          order: widget.offlineOrder ?? _order!,
+          summary: summary,
+          cashReceived: cashReceived,
+        );
+        unawaited(_syncCheckoutInBackground(paymentOfflineRef));
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(
+                  _isOffline
+                      ? 'Payment saved offline and will sync automatically.'
+                      : 'Payment completed. Syncing in the background.',
+                ),
+              ),
+            );
+        }
         return;
       }
 
-      // ── Online payment ──────────────────────────────────────────────────────
-      final payment = await ref.read(paymentProvider.notifier).checkout(
+      // Browser checkout keeps the direct API path because sqflite is not
+      // available there; the backend website remains unchanged.
+      final payment = await ref
+          .read(paymentProvider.notifier)
+          .checkout(
             orderId: widget.orderId,
+            offlineRef: paymentOfflineRef,
             paymentMethod: _method,
             cashReceived: cashReceived,
             promotionId: summary.promotionId,
@@ -274,12 +359,32 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       setState(() => _completedPayment = payment);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e)), duration: const Duration(seconds: 4)),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(friendlyError(e)),
+              duration: const Duration(seconds: 4),
+            ),
+          );
       }
     } finally {
       if (mounted) setState(() => _paying = false);
+    }
+  }
+
+  Future<void> _syncCheckoutInBackground(String paymentOfflineRef) async {
+    try {
+      await OrderService.syncPendingCheckoutQueue();
+      final stillPending = await LocalDb.isPaymentPending(paymentOfflineRef);
+      if (!mounted) return;
+      ref.invalidate(openOrdersProvider);
+      ref.invalidate(tablesProvider);
+      ref.invalidate(pendingSyncCountProvider);
+      setState(() => _paymentPendingSync = stillPending);
+    } catch (_) {
+      // The durable queue remains pending and the app-level timer/connectivity
+      // listener will retry it. Never surface an async sync error to checkout.
     }
   }
 
@@ -290,12 +395,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     setState(() => _printingBill = true);
     try {
       final settings = ref.read(settingsProvider).value;
+      final user = ref.read(authProvider).user;
       await ReceiptPrinter.printBill(
         order: order,
         summary: summary,
         storeName: settings?.storeName ?? 'My Restaurant',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
+        settings: settings,
+        employeeName: user?.fullName.isNotEmpty == true
+            ? user!.fullName
+            : user?.username,
+        posName: user?.username,
       );
     } catch (e) {
       if (mounted) {
@@ -324,12 +435,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     setState(() => _printing = true);
     try {
       final settings = ref.read(settingsProvider).value;
+      final user = ref.read(authProvider).user;
       await ReceiptPrinter.print(
         payment: _completedPayment!,
         items: _order?.items ?? [],
         storeName: settings?.storeName ?? 'My Restaurant',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
+        settings: settings,
+        employeeName: user?.fullName.isNotEmpty == true
+            ? user!.fullName
+            : user?.username,
+        posName: user?.username,
       );
       if (mounted) setState(() => _hasPrinted = true);
     } catch (e) {
@@ -356,19 +473,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
   }
 
   void _done() {
-    // Offline payments have id=-1; skip receipt screen and go home
-    if (_isOffline || _hasPrinted) {
-      context.go('/cashier');
-    } else {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => ReceiptScreen(
-            payment: _completedPayment!,
-            items: _order?.items ?? [],
-          ),
-        ),
-      );
-    }
+    context.go('/cashier');
   }
 
   // ── Build ────────────────────────────────────────────────────────────────────
@@ -380,20 +485,22 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(_checkoutTitle()),
-          if (_isOffline) ...[
+          if (_isOffline || _paymentPendingSync) ...[
             const SizedBox(width: 8),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
                 color: Colors.orange,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Text('OFFLINE',
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white)),
+              child: Text(
+                _isOffline ? 'OFFLINE' : 'SYNCING',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
             ),
           ],
         ],
@@ -403,14 +510,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     if (_loading) {
       return Scaffold(
         appBar: appBar,
-        body: const Center(child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 12),
-            Text('Loading order...'),
-          ],
-        )),
+        body: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Loading order...'),
+            ],
+          ),
+        ),
       );
     }
 
@@ -425,12 +534,16 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               children: [
                 const Icon(Icons.error_outline, size: 56, color: Colors.red),
                 const SizedBox(height: 16),
-                Text('Failed to load order',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  'Failed to load order',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
                 const SizedBox(height: 8),
-                Text(_loadError!,
-                    style: const TextStyle(color: Colors.grey),
-                    textAlign: TextAlign.center),
+                Text(
+                  _loadError!,
+                  style: const TextStyle(color: Colors.grey),
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: 20),
                 ElevatedButton.icon(
                   onPressed: _load,
@@ -438,7 +551,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
                   ),
                   icon: const Icon(Icons.refresh),
                   label: const Text('Retry'),
@@ -454,7 +569,9 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     final order = _order;
     final summary = _summary;
     if (order == null || summary == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _load(); });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
       return Scaffold(
         appBar: appBar,
         body: const Center(child: CircularProgressIndicator()),
@@ -475,35 +592,40 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               title: 'Order Items',
               child: Column(
                 children: [
-                  ...order.items.map((item) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 5),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                item.productName,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w500),
+                  ...order.items.map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item.productName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
-                            Text(
-                              item.weight != null
-                                  ? '${item.weight!.toStringAsFixed(3)} kg'
-                                  : '×${item.quantity}',
-                              style: TextStyle(color: Colors.grey.shade600),
-                            ),
-                            const SizedBox(width: 16),
-                            Text(
-                              formatRM(item.subtotal),
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w500),
-                            ),
-                          ],
-                        ),
-                      )),
+                          ),
+                          Text(
+                            item.weight != null
+                                ? '${item.weight!.toStringAsFixed(3)} kg'
+                                : '×${item.quantity}',
+                            style: TextStyle(color: Colors.grey.shade600),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            formatRM(item.subtotal),
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   const Divider(height: 18),
-                  _SummaryRow('Subtotal', formatRM(summary.subtotal),
-                      bold: true),
+                  _SummaryRow(
+                    'Subtotal',
+                    formatRM(summary.subtotal),
+                    bold: true,
+                  ),
                 ],
               ),
             ),
@@ -516,18 +638,25 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 children: [
                   if (summary.serviceCharge > 0)
                     _SummaryRow(
-                        'Service Charge', formatRM(summary.serviceCharge)),
+                      'Service Charge',
+                      formatRM(summary.serviceCharge),
+                    ),
                   if (summary.sst > 0)
                     _SummaryRow('SST', formatRM(summary.sst)),
                   if (summary.discount > 0)
                     _SummaryRow(
-                        'Discount', '− ${formatRM(summary.discount)}',
-                        valueColor: Colors.green),
+                      'Discount',
+                      '− ${formatRM(summary.discount)}',
+                      valueColor: Colors.green,
+                    ),
                   const Divider(height: 14),
-                  _SummaryRow('TOTAL', formatRM(summary.grandTotal),
-                      bold: true,
-                      fontSize: 22,
-                      valueColor: const Color(0xFF1E6FD9)),
+                  _SummaryRow(
+                    'TOTAL',
+                    formatRM(summary.grandTotal),
+                    bold: true,
+                    fontSize: 22,
+                    valueColor: const Color(0xFF1E6FD9),
+                  ),
                 ],
               ),
             ),
@@ -579,7 +708,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                         isDense: true,
                       ),
                       keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
+                        decimal: true,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     _QuickAmounts(
@@ -606,8 +736,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
               _SectionCard(
                 title: 'DuitNow QR',
                 child: qrUrlAsync.when(
-                  loading: () =>
-                      const Center(child: LinearProgressIndicator()),
+                  loading: () => const Center(child: LinearProgressIndicator()),
                   error: (_, _) => const Text(
                     'Could not load QR. Check settings.',
                     style: TextStyle(color: Colors.orange),
@@ -618,10 +747,10 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                           children: [
                             ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.network(
-                                url,
+                              child: CachedNetworkImage(
+                                imageUrl: url,
                                 height: 220,
-                                errorBuilder: (_, _, _) =>
+                                errorWidget: (_, _, _) =>
                                     const Text('QR image unavailable'),
                               ),
                             ),
@@ -629,7 +758,8 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                             Text(
                               'Ask customer to scan — ${formatRM(summary.grandTotal)}',
                               style: const TextStyle(
-                                  fontWeight: FontWeight.w600),
+                                fontWeight: FontWeight.w600,
+                              ),
                               textAlign: TextAlign.center,
                             ),
                           ],
@@ -650,13 +780,18 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                 title: 'Card Payment',
                 child: Column(
                   children: [
-                    const Icon(Icons.credit_card,
-                        size: 48, color: Color(0xFF1E6FD9)),
+                    const Icon(
+                      Icons.credit_card,
+                      size: 48,
+                      color: Color(0xFF1E6FD9),
+                    ),
                     const SizedBox(height: 8),
                     Text(
                       'Total: ${formatRM(summary.grandTotal)}',
                       style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     const Text(
@@ -679,26 +814,44 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                   color: const Color(0xFF10B981).withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                      color: const Color(0xFF10B981).withValues(alpha: 0.4)),
+                    color: const Color(0xFF10B981).withValues(alpha: 0.4),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.check_circle,
-                            color: Color(0xFF10B981), size: 20),
+                        Icon(
+                          _paymentPendingSync
+                              ? Icons.cloud_upload_outlined
+                              : Icons.check_circle,
+                          color: _paymentPendingSync
+                              ? Colors.orange
+                              : const Color(0xFF10B981),
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
-                        const Text('Payment Successful!',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                                color: Color(0xFF10B981))),
+                        Text(
+                          _paymentPendingSync
+                              ? 'Payment completed — syncing in background'
+                              : 'Payment Successful!',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: _paymentPendingSync
+                                ? Colors.orange
+                                : const Color(0xFF10B981),
+                          ),
+                        ),
                         const Spacer(),
-                        Text(formatRM(completedPayment.grandTotal),
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF10B981))),
+                        Text(
+                          formatRM(completedPayment.grandTotal),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF10B981),
+                          ),
+                        ),
                       ],
                     ),
                     if (_hasPrinted) ...[
@@ -707,9 +860,13 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                         children: [
                           Icon(Icons.check, size: 13, color: Color(0xFF10B981)),
                           SizedBox(width: 4),
-                          Text('Receipt printed',
-                              style: TextStyle(
-                                  color: Color(0xFF10B981), fontSize: 12)),
+                          Text(
+                            'Receipt printed',
+                            style: TextStyle(
+                              color: Color(0xFF10B981),
+                              fontSize: 12,
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -726,20 +883,23 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                                       width: 16,
                                       height: 16,
                                       child: CircularProgressIndicator(
-                                          strokeWidth: 2),
+                                        strokeWidth: 2,
+                                      ),
                                     )
                                   : const Icon(Icons.print_outlined),
-                              label: Text(_printing
-                                  ? 'Printing…'
-                                  : _hasPrinted
-                                      ? 'Print Again'
-                                      : 'Print Receipt'),
+                              label: Text(
+                                _printing
+                                    ? 'Printing…'
+                                    : _hasPrinted
+                                    ? 'Print Again'
+                                    : 'Print Receipt',
+                              ),
                               style: OutlinedButton.styleFrom(
                                 minimumSize: Size.zero,
-                                tapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                 side: const BorderSide(
-                                    color: Color(0xFF10B981)),
+                                  color: Color(0xFF10B981),
+                                ),
                                 foregroundColor: const Color(0xFF10B981),
                               ),
                             ),
@@ -755,15 +915,14 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                                 backgroundColor: const Color(0xFF10B981),
                                 foregroundColor: Colors.white,
                                 minimumSize: Size.zero,
-                                tapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                 shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10)),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                               ),
-                              child: Text(
-                                _hasPrinted ? 'Done' : 'View Receipt',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
+                              child: const Text(
+                                'Done',
+                                style: TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),
                           ),
@@ -802,19 +961,24 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
                     backgroundColor: const Color(0xFF10B981),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   child: _paying
                       ? const SizedBox(
                           width: 22,
                           height: 22,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2.5, color: Colors.white),
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
                         )
                       : Text(
                           'Complete Payment — ${formatRM(summary.grandTotal)}',
                           style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                 ),
               ),
@@ -835,26 +999,26 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                title.toUpperCase(),
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
-                  color: Colors.grey.shade500,
-                ),
-              ),
-              const SizedBox(height: 10),
-              child,
-            ],
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title.toUpperCase(),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.8,
+              color: Colors.grey.shade500,
+            ),
           ),
-        ),
-      );
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    ),
+  );
 }
 
 class _SummaryRow extends StatelessWidget {
@@ -874,24 +1038,28 @@ class _SummaryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label,
-                style: TextStyle(
-                  fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-                  fontSize: fontSize,
-                )),
-            Text(value,
-                style: TextStyle(
-                  fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-                  fontSize: fontSize,
-                  color: valueColor,
-                )),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+            fontSize: fontSize,
+          ),
         ),
-      );
+        Text(
+          value,
+          style: TextStyle(
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+            fontSize: fontSize,
+            color: valueColor,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _MethodButton extends StatelessWidget {
@@ -908,43 +1076,42 @@ class _MethodButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Expanded(
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: selected
-                    ? const Color(0xFF1E6FD9)
-                    : Colors.grey.shade300,
-                width: selected ? 2 : 1,
-              ),
-              color: selected
-                  ? const Color(0xFF1E6FD9).withValues(alpha: 0.1)
-                  : null,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon,
-                    color: selected ? const Color(0xFF1E6FD9) : Colors.grey,
-                    size: 24),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: selected ? const Color(0xFF1E6FD9) : null,
-                    fontWeight:
-                        selected ? FontWeight.bold : FontWeight.normal,
-                  ),
-                ),
-              ],
-            ),
+    child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? const Color(0xFF1E6FD9) : Colors.grey.shade300,
+            width: selected ? 2 : 1,
           ),
+          color: selected
+              ? const Color(0xFF1E6FD9).withValues(alpha: 0.1)
+              : null,
         ),
-      );
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: selected ? const Color(0xFF1E6FD9) : Colors.grey,
+              size: 24,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: selected ? const Color(0xFF1E6FD9) : null,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _QuickAmounts extends StatelessWidget {
@@ -970,20 +1137,22 @@ class _QuickAmounts extends StatelessWidget {
       spacing: 6,
       runSpacing: 6,
       children: suggestions
-          .map((v) => ActionChip(
-                label: Text(
-                  v == total
-                      ? 'Exact'
-                      : 'RM ${v % 1 == 0 ? v.toInt() : v.toStringAsFixed(2)}',
-                ),
-                onPressed: () => onSelect(v),
-                backgroundColor:
-                    const Color(0xFF1E6FD9).withValues(alpha: 0.08),
-                side:
-                    const BorderSide(color: Color(0xFF1E6FD9), width: 0.8),
-                labelStyle:
-                    const TextStyle(color: Color(0xFF1E6FD9), fontSize: 13),
-              ))
+          .map(
+            (v) => ActionChip(
+              label: Text(
+                v == total
+                    ? 'Exact'
+                    : 'RM ${v % 1 == 0 ? v.toInt() : v.toStringAsFixed(2)}',
+              ),
+              onPressed: () => onSelect(v),
+              backgroundColor: const Color(0xFF1E6FD9).withValues(alpha: 0.08),
+              side: const BorderSide(color: Color(0xFF1E6FD9), width: 0.8),
+              labelStyle: const TextStyle(
+                color: Color(0xFF1E6FD9),
+                fontSize: 13,
+              ),
+            ),
+          )
           .toList(),
     );
   }
@@ -992,8 +1161,7 @@ class _QuickAmounts extends StatelessWidget {
 class _ChangeDisplay extends StatelessWidget {
   final String cashText;
   final double grandTotal;
-  const _ChangeDisplay(
-      {required this.cashText, required this.grandTotal});
+  const _ChangeDisplay({required this.cashText, required this.grandTotal});
 
   @override
   Widget build(BuildContext context) {
@@ -1017,8 +1185,9 @@ class _ChangeDisplay extends StatelessWidget {
 
     final change = received - grandTotal;
     final isShort = change < -0.005;
-    final textColor =
-        isShort ? const Color(0xFFEF4444) : const Color(0xFF10B981);
+    final textColor = isShort
+        ? const Color(0xFFEF4444)
+        : const Color(0xFF10B981);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1033,14 +1202,20 @@ class _ChangeDisplay extends StatelessWidget {
           Text(
             isShort ? 'Short by' : 'Change',
             style: TextStyle(
-                fontWeight: FontWeight.w600, color: textColor, fontSize: 15),
+              fontWeight: FontWeight.w600,
+              color: textColor,
+              fontSize: 15,
+            ),
           ),
           Text(
             isShort
                 ? 'RM ${change.abs().toStringAsFixed(2)}'
                 : 'RM ${change.toStringAsFixed(2)}',
             style: TextStyle(
-                fontWeight: FontWeight.bold, color: textColor, fontSize: 20),
+              fontWeight: FontWeight.bold,
+              color: textColor,
+              fontSize: 20,
+            ),
           ),
         ],
       ),

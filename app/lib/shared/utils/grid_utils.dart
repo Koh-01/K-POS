@@ -26,8 +26,7 @@ SliverGridDelegateWithFixedCrossAxisCount responsiveGridDelegate({
 
   final availableWidth = constraints.maxWidth - padding.horizontal;
   final availableHeight = constraints.maxHeight - padding.vertical;
-  final colWidth =
-      (availableWidth - spacing * (wideColumns - 1)) / wideColumns;
+  final colWidth = (availableWidth - spacing * (wideColumns - 1)) / wideColumns;
   final rowHeight =
       (availableHeight - spacing * (wideVisibleRows - 1)) / wideVisibleRows;
   final aspectRatio = (colWidth / rowHeight).clamp(0.3, 3.0);

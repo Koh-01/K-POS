@@ -1,12 +1,12 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/error_utils.dart';
 
-final _loginLogsProvider =
-    FutureProvider.autoDispose<List<dynamic>>((ref) async {
-  final res =
-      await ApiClient.instance.get('/admin/login-logs?limit=50&page=1');
+final _loginLogsProvider = FutureProvider.autoDispose<List<dynamic>>((
+  ref,
+) async {
+  final res = await ApiClient.instance.get('/admin/login-logs?limit=50&page=1');
   return res.data as List<dynamic>;
 });
 
@@ -57,9 +57,13 @@ class LoginLogsScreen extends ConsumerWidget {
                     title: Text(log['username'] as String? ?? ''),
                     subtitle: Text(_formatDt(log['created_at'] as String?)),
                     trailing: ip != null && ip.isNotEmpty
-                        ? Text(ip,
+                        ? Text(
+                            ip,
                             style: const TextStyle(
-                                fontSize: 12, color: Colors.grey))
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          )
                         : null,
                   );
                 },

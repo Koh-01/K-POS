@@ -1,16 +1,17 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/restaurant_table.dart';
 import '../../../shared/utils/error_utils.dart';
 
-final _tablesManageProvider =
-    FutureProvider.autoDispose<List<RestaurantTable>>((ref) async {
-  final res = await ApiClient.instance.get('/tables');
-  return (res.data as List)
-      .map((e) => RestaurantTable.fromJson(e as Map<String, dynamic>))
-      .toList();
-});
+final _tablesManageProvider = FutureProvider.autoDispose<List<RestaurantTable>>(
+  (ref) async {
+    final res = await ApiClient.instance.get('/tables');
+    return (res.data as List)
+        .map((e) => RestaurantTable.fromJson(e as Map<String, dynamic>))
+        .toList();
+  },
+);
 
 class TablesScreen extends ConsumerWidget {
   const TablesScreen({super.key});
@@ -30,8 +31,11 @@ class TablesScreen extends ConsumerWidget {
         error: (e, _) => Center(child: Text(loadError(e))),
         data: (tables) => tables.isEmpty
             ? const Center(
-                child: Text('No tables yet.\nTap + to add one.',
-                    textAlign: TextAlign.center))
+                child: Text(
+                  'No tables yet.\nTap + to add one.',
+                  textAlign: TextAlign.center,
+                ),
+              )
             : ListView.separated(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 separatorBuilder: (_, _) => const Divider(height: 1),
@@ -54,28 +58,35 @@ class TablesScreen extends ConsumerWidget {
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'Table Name (e.g. Table 5)'),
+          decoration: const InputDecoration(
+            labelText: 'Table Name (e.g. Table 5)',
+          ),
           textCapitalization: TextCapitalization.words,
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Add'),
+          ),
         ],
       ),
     );
     if (confirmed == true && ctrl.text.trim().isNotEmpty) {
       try {
-        await ApiClient.instance
-            .post('/tables', data: {'name': ctrl.text.trim()});
+        await ApiClient.instance.post(
+          '/tables',
+          data: {'name': ctrl.text.trim()},
+        );
         ref.invalidate(_tablesManageProvider);
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+            ..clearSnackBars()
+            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
       }
     }
@@ -101,12 +112,13 @@ class _TableTile extends StatelessWidget {
           color: table.isOccupied ? Colors.red : Colors.green,
         ),
       ),
-      title: Text(table.name,
-          style: const TextStyle(fontWeight: FontWeight.w600)),
+      title: Text(
+        table.name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
       subtitle: Text(
         table.isOccupied ? 'Occupied' : 'Available',
-        style: TextStyle(
-            color: table.isOccupied ? Colors.red : Colors.green),
+        style: TextStyle(color: table.isOccupied ? Colors.red : Colors.green),
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -117,9 +129,13 @@ class _TableTile extends StatelessWidget {
             onPressed: () => _rename(context),
           ),
           IconButton(
-            icon: Icon(Icons.delete_outline,
-                color: table.isOccupied ? Colors.grey : Colors.red),
-            tooltip: table.isOccupied ? 'Cannot delete occupied table' : 'Delete',
+            icon: Icon(
+              Icons.delete_outline,
+              color: table.isOccupied ? Colors.grey : Colors.red,
+            ),
+            tooltip: table.isOccupied
+                ? 'Cannot delete occupied table'
+                : 'Delete',
             onPressed: table.isOccupied ? null : () => _delete(context),
           ),
         ],
@@ -141,23 +157,28 @@ class _TableTile extends StatelessWidget {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Save')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
     if (confirmed == true && ctrl.text.trim().isNotEmpty && context.mounted) {
       try {
-        await ApiClient.instance
-            .put('/tables/${table.id}', data: {'name': ctrl.text.trim()});
+        await ApiClient.instance.put(
+          '/tables/${table.id}',
+          data: {'name': ctrl.text.trim()},
+        );
         onRefresh();
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+            ..clearSnackBars()
+            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
       }
     }
@@ -171,8 +192,9 @@ class _TableTile extends StatelessWidget {
         content: Text('Delete "${table.name}"? This cannot be undone.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -188,7 +210,8 @@ class _TableTile extends StatelessWidget {
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+            ..clearSnackBars()
+            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
       }
     }

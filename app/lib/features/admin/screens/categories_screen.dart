@@ -5,7 +5,9 @@ import '../../../core/models/category.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../../shared/utils/error_utils.dart';
 
-final categoriesProvider = FutureProvider.autoDispose<List<Category>>((ref) async {
+final categoriesProvider = FutureProvider.autoDispose<List<Category>>((
+  ref,
+) async {
   final res = await ApiClient.instance.get('/categories');
   return (res.data as List)
       .map((e) => Category.fromJson(e as Map<String, dynamic>))
@@ -32,11 +34,10 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
   }
 
   void _syncFromProvider(List<Category> cats) {
-    if (_localCats == null) _localCats = List.from(cats);
+    _localCats ??= List.from(cats);
   }
 
   Future<void> _onReorder(int oldIndex, int newIndex) async {
-    if (newIndex > oldIndex) newIndex--;
     final cats = List<Category>.from(_localCats!);
     final moved = cats.removeAt(oldIndex);
     cats.insert(newIndex, moved);
@@ -56,7 +57,8 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _reordering = false);
@@ -65,8 +67,9 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
 
   Future<void> _showCategoryDialog({Category? category}) async {
     final nameCtrl = TextEditingController(text: category?.name ?? '');
-    final sortCtrl =
-        TextEditingController(text: (category?.sortOrder ?? 0).toString());
+    final sortCtrl = TextEditingController(
+      text: (category?.sortOrder ?? 0).toString(),
+    );
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -94,11 +97,13 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Save')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
@@ -108,22 +113,23 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
 
     try {
       if (category == null) {
-        await ApiClient.instance.post('/categories', data: {
-          'name': nameCtrl.text.trim(),
-          'sort_order': sortOrder,
-        });
+        await ApiClient.instance.post(
+          '/categories',
+          data: {'name': nameCtrl.text.trim(), 'sort_order': sortOrder},
+        );
       } else {
-        await ApiClient.instance.put('/categories/${category.id}', data: {
-          'name': nameCtrl.text.trim(),
-          'sort_order': sortOrder,
-        });
+        await ApiClient.instance.put(
+          '/categories/${category.id}',
+          data: {'name': nameCtrl.text.trim(), 'sort_order': sortOrder},
+        );
       }
       final fresh = await ref.refresh(categoriesProvider.future);
       if (mounted) setState(() => _localCats = List.from(fresh));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -134,11 +140,13 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Category?'),
         content: Text(
-            'Delete "${category.name}"? Products in this category will become uncategorised.'),
+          'Delete "${category.name}"? Products in this category will become uncategorised.',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
@@ -155,7 +163,8 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -175,7 +184,9 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                 width: 18,
                 height: 18,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white),
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               ),
             ),
           IconButton(
@@ -193,10 +204,11 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
           final display = _search.isEmpty
               ? _localCats!
               : _localCats!
-                  .where((c) => c.name
-                      .toLowerCase()
-                      .contains(_search.toLowerCase()))
-                  .toList();
+                    .where(
+                      (c) =>
+                          c.name.toLowerCase().contains(_search.toLowerCase()),
+                    )
+                    .toList();
 
           if (_localCats!.isEmpty) {
             return const Center(
@@ -224,30 +236,32 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                           )
                         : null,
                     isDense: true,
-                    contentPadding:
-                        const EdgeInsets.symmetric(vertical: 10),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   onChanged: (v) => setState(() => _search = v),
                 ),
               ),
               Container(
                 width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 color: AppTheme.creamDeep,
                 child: Row(
                   children: [
-                    const Icon(Icons.drag_indicator_rounded,
-                        size: 16, color: AppTheme.textHint),
+                    const Icon(
+                      Icons.drag_indicator_rounded,
+                      size: 16,
+                      color: AppTheme.textHint,
+                    ),
                     const SizedBox(width: 6),
                     Text(
                       'Drag to reorder  •  Tap edit to set exact number',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: AppTheme.textHint,
-                      ),
+                      style: TextStyle(fontSize: 12, color: AppTheme.textHint),
                     ),
                   ],
                 ),
@@ -257,28 +271,28 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
                   child: Center(child: Text('No matching categories')),
                 )
               else
-              Expanded(
-                child: ReorderableListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: display.length,
-                  onReorder: _onReorder,
-                  proxyDecorator: (child, index, animation) => Material(
-                    elevation: 4,
-                    borderRadius: BorderRadius.circular(12),
-                    child: child,
+                Expanded(
+                  child: ReorderableListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: display.length,
+                    onReorderItem: _onReorder,
+                    proxyDecorator: (child, index, animation) => Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(12),
+                      child: child,
+                    ),
+                    itemBuilder: (ctx, i) {
+                      final cat = display[i];
+                      return _CategoryTile(
+                        key: ValueKey(cat.id),
+                        category: cat,
+                        position: i,
+                        onEdit: () => _showCategoryDialog(category: cat),
+                        onDelete: () => _confirmDelete(cat),
+                      );
+                    },
                   ),
-                  itemBuilder: (ctx, i) {
-                    final cat = display[i];
-                    return _CategoryTile(
-                      key: ValueKey(cat.id),
-                      category: cat,
-                      position: i,
-                      onEdit: () => _showCategoryDialog(category: cat),
-                      onDelete: () => _confirmDelete(cat),
-                    );
-                  },
                 ),
-              ),
             ],
           );
         },
@@ -306,13 +320,20 @@ class _CategoryTile extends StatelessWidget {
     return ListTile(
       leading: ReorderableDragStartListener(
         index: position,
-        child: const Icon(Icons.drag_indicator_rounded,
-            color: AppTheme.textHint, size: 22),
+        child: const Icon(
+          Icons.drag_indicator_rounded,
+          color: AppTheme.textHint,
+          size: 22,
+        ),
       ),
-      title: Text(category.name,
-          style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text('Order: ${category.sortOrder}',
-          style: const TextStyle(fontSize: 12, color: AppTheme.textHint)),
+      title: Text(
+        category.name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(
+        'Order: ${category.sortOrder}',
+        style: const TextStyle(fontSize: 12, color: AppTheme.textHint),
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

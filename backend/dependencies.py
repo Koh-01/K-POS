@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from token_utils import decode_access_token
 import models
+from tenant_database import select_for_user
 
 bearer_scheme = HTTPBearer()
 
@@ -12,10 +13,15 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_
     if payload is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    user_id = payload.get("uid")
     username = payload.get("sub")
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
+    query = db.query(models.User)
+    user = query.filter(models.User.id == user_id).first() if user_id else query.filter(models.User.username == username).first()
+    if user is None or not user.is_active or user.is_deleted:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    if user.role == "admin" and user.email and not user.email_verified:
+        raise HTTPException(status_code=403, detail="Email address has not been verified")
+    select_for_user(db, user)
 
     return user
 

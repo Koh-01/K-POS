@@ -16,9 +16,12 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
+from time_utils import local_now
 
 _SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-_TOKEN_FILE = Path(__file__).parent / "token.json"
+_TOKEN_FILE = Path(
+    os.getenv("GDRIVE_TOKEN_FILE", str(Path(__file__).parent / "token.json"))
+)
 
 
 # ── Google Drive helpers ──────────────────────────────────────────────────────
@@ -26,7 +29,7 @@ _TOKEN_FILE = Path(__file__).parent / "token.json"
 def _drive_service():
     if not _TOKEN_FILE.exists():
         raise RuntimeError(
-            "token.json not found. Run `python gdrive_auth_setup.py` once to authorize."
+            "Google Drive is not configured: token file is missing."
         )
     creds = Credentials.from_authorized_user_file(str(_TOKEN_FILE), _SCOPES)
     if creds.expired and creds.refresh_token:
@@ -43,9 +46,12 @@ def _do_upload(service, local_path: str, filename: str, folder_id: str) -> str:
     return file.get("id")
 
 
-def _delete_oldest_backup(service, folder_id: str):
+def _delete_oldest_backup(service, folder_id: str, prefix: str):
     resp = service.files().list(
-        q=f"'{folder_id}' in parents and trashed=false",
+        q=(
+            f"'{folder_id}' in parents and trashed=false "
+            f"and name contains '{prefix}'"
+        ),
         orderBy="createdTime asc",
         pageSize=1,
         fields="files(id,name)",
@@ -57,16 +63,21 @@ def _delete_oldest_backup(service, folder_id: str):
         print(f"[backup] Deleted oldest backup to free quota: {oldest['name']}")
 
 
-def _upload(local_path: str, filename: str, folder_id: str) -> str:
-    service = _drive_service()
+def upload_with_service(service, local_path: str, filename: str, folder_id: str, prune_prefix: str) -> str:
+    """Upload, deleting the oldest `prune_prefix*` file once if Drive is full."""
     try:
         return _do_upload(service, local_path, filename, folder_id)
     except HttpError as exc:
         if exc.status_code == 403 and "storageQuotaExceeded" in str(exc):
             print("[backup] Storage quota exceeded — deleting oldest backup and retrying")
-            _delete_oldest_backup(service, folder_id)
+            _delete_oldest_backup(service, folder_id, prune_prefix)
             return _do_upload(service, local_path, filename, folder_id)
         raise
+
+
+def _upload(local_path: str, filename: str, folder_id: str) -> str:
+    """Upload to the operator's Drive (token.json + GDRIVE_FOLDER_ID)."""
+    return upload_with_service(_drive_service(), local_path, filename, folder_id, "pos_backup_")
 
 
 # ── Pure-Python SQL dump ──────────────────────────────────────────────────────
@@ -93,7 +104,7 @@ def _python_dump(host: str, port: str, user: str, password: str, dbname: str, ou
     cur = conn.cursor()
 
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(f"-- POS System backup {datetime.now().isoformat()}\n")
+        f.write(f"-- POS System backup {local_now().isoformat()}\n")
         f.write("SET NAMES utf8mb4;\n")
         f.write("SET FOREIGN_KEY_CHECKS=0;\n\n")
 
@@ -137,7 +148,7 @@ def run_backup() -> dict:
     except Exception as e:
         raise RuntimeError(f"Cannot parse DATABASE_URL: {e}")
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = local_now().strftime("%Y%m%d_%H%M%S")
     filename = f"pos_backup_{timestamp}.sql"
 
     backup_dir = Path(__file__).parent / "backups"

@@ -25,8 +25,18 @@ const _kGreen = Color(0xFF10B981);
 const _kPurple = Color(0xFF8B5CF6);
 
 const _monthNames = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 class SalesReportScreen extends ConsumerStatefulWidget {
@@ -88,25 +98,46 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
         final end = DateTime.now();
         final start = end.subtract(Duration(days: _dailyDays - 1));
         final r = await ApiClient.instance.get(
-            '/reports/sales?start_date=${_fmtDate(start)}&end_date=${_fmtDate(end)}');
+          '/reports/sales?start_date=${_fmtDate(start)}&end_date=${_fmtDate(end)}',
+        );
         final data = r.data as Map<String, dynamic>;
         final rows = (data['daily_breakdown'] as List).map((e) {
           final dateStr = e['date'] as String;
-          final label = dateStr.length >= 7 ? dateStr.substring(5) : dateStr; // MM-DD
-          return _DataPoint(label: label, revenue: _parseRev(e['revenue']), orders: _parseInt(e['orders']));
+          final label = dateStr.length >= 7
+              ? dateStr.substring(5)
+              : dateStr; // MM-DD
+          return _DataPoint(
+            label: label,
+            revenue: _parseRev(e['revenue']),
+            orders: _parseInt(e['orders']),
+          );
         }).toList();
-        return (rows, _parseRev(data['total_revenue']), _parseInt(data['total_orders']));
+        return (
+          rows,
+          _parseRev(data['total_revenue']),
+          _parseInt(data['total_orders']),
+        );
 
       case 1: // Monthly
-        final r = await ApiClient.instance.get('/reports/sales/annual?year=$_monthlyYear');
+        final r = await ApiClient.instance.get(
+          '/reports/sales/annual?year=$_monthlyYear',
+        );
         final data = r.data as Map<String, dynamic>;
         final rows = (data['monthly_breakdown'] as List).map((e) {
           final monthStr = e['month'] as String; // "YYYY-MM"
           final mIdx = (int.tryParse(monthStr.split('-').last) ?? 1) - 1;
           final label = _monthNames[mIdx.clamp(0, 11)];
-          return _DataPoint(label: label, revenue: _parseRev(e['revenue']), orders: _parseInt(e['orders']));
+          return _DataPoint(
+            label: label,
+            revenue: _parseRev(e['revenue']),
+            orders: _parseInt(e['orders']),
+          );
         }).toList();
-        return (rows, _parseRev(data['total_revenue']), _parseInt(data['total_orders']));
+        return (
+          rows,
+          _parseRev(data['total_revenue']),
+          _parseInt(data['total_orders']),
+        );
 
       case 2: // Yearly
         final r = await ApiClient.instance.get('/reports/sales/yearly');
@@ -118,18 +149,31 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
             orders: _parseInt(e['orders']),
           );
         }).toList();
-        return (rows, _parseRev(data['total_revenue']), _parseInt(data['total_orders']));
+        return (
+          rows,
+          _parseRev(data['total_revenue']),
+          _parseInt(data['total_orders']),
+        );
 
       case 3: // Custom
         final r = await ApiClient.instance.get(
-            '/reports/sales?start_date=${_fmtDate(_customStart)}&end_date=${_fmtDate(_customEnd)}');
+          '/reports/sales?start_date=${_fmtDate(_customStart)}&end_date=${_fmtDate(_customEnd)}',
+        );
         final data = r.data as Map<String, dynamic>;
         final rows = (data['daily_breakdown'] as List).map((e) {
           final dateStr = e['date'] as String;
           final label = dateStr.length >= 7 ? dateStr.substring(5) : dateStr;
-          return _DataPoint(label: label, revenue: _parseRev(e['revenue']), orders: _parseInt(e['orders']));
+          return _DataPoint(
+            label: label,
+            revenue: _parseRev(e['revenue']),
+            orders: _parseInt(e['orders']),
+          );
         }).toList();
-        return (rows, _parseRev(data['total_revenue']), _parseInt(data['total_orders']));
+        return (
+          rows,
+          _parseRev(data['total_revenue']),
+          _parseInt(data['total_orders']),
+        );
 
       default:
         return (<_DataPoint>[], 0.0, 0);
@@ -144,8 +188,13 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
     int fc = 0, sc = 0;
     for (int i = 0; i < bd.length; i++) {
       if (bd[i].orders > 0) {
-        if (i < half) { firstSum += bd[i].revenue / bd[i].orders; fc++; }
-        else { secondSum += bd[i].revenue / bd[i].orders; sc++; }
+        if (i < half) {
+          firstSum += bd[i].revenue / bd[i].orders;
+          fc++;
+        } else {
+          secondSum += bd[i].revenue / bd[i].orders;
+          sc++;
+        }
       }
     }
     if (fc == 0 || sc == 0) return _Trend.flat;
@@ -190,8 +239,8 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
-                    ? Center(child: Text(_error!))
-                    : _buildContent(),
+                ? Center(child: Text(_error!))
+                : _buildContent(),
           ),
         ],
       ),
@@ -209,7 +258,10 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
             child: InkWell(
               onTap: () {
                 if (_tabIndex == i) return;
-                setState(() { _tabIndex = i; _breakdown = null; });
+                setState(() {
+                  _tabIndex = i;
+                  _breakdown = null;
+                });
                 _load();
               },
               child: Container(
@@ -246,7 +298,12 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            for (final rec in [('Today', 1), ('7 days', 7), ('30 days', 30), ('90 days', 90)])
+            for (final rec in [
+              ('Today', 1),
+              ('7 days', 7),
+              ('30 days', 30),
+              ('90 days', 90),
+            ])
               Padding(
                 padding: const EdgeInsets.only(right: 6),
                 child: ChoiceChip(
@@ -254,7 +311,10 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                   selected: _dailyDays == rec.$2,
                   onSelected: (_) {
                     if (_dailyDays == rec.$2) return;
-                    setState(() { _dailyDays = rec.$2; _breakdown = null; });
+                    setState(() {
+                      _dailyDays = rec.$2;
+                      _breakdown = null;
+                    });
                     _load();
                   },
                 ),
@@ -279,7 +339,10 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                   selected: _monthlyYear == y,
                   onSelected: (_) {
                     if (_monthlyYear == y) return;
-                    setState(() { _monthlyYear = y; _breakdown = null; });
+                    setState(() {
+                      _monthlyYear = y;
+                      _breakdown = null;
+                    });
                     _load();
                   },
                 ),
@@ -292,29 +355,44 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
     if (_tabIndex == 2) {
       return const Padding(
         padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Text('All years on record', style: TextStyle(color: Colors.grey, fontSize: 13)),
+        child: Text(
+          'All years on record',
+          style: TextStyle(color: Colors.grey, fontSize: 13),
+        ),
       );
     }
 
     // Custom
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      child: Semantics(
+        button: true,
+        label: 'Select sales report date range',
+        child: InkWell(
+          onTap: _pickCustomRange,
+          borderRadius: BorderRadius.circular(10),
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Date range',
+              prefixIcon: Icon(Icons.date_range_outlined),
+              suffixIcon: Icon(Icons.keyboard_arrow_down_rounded),
+              border: OutlineInputBorder(),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 14,
+              ),
+            ),
             child: Text(
               _customApplied
                   ? '${_fmtDate(_customStart)}  →  ${_fmtDate(_customEnd)}'
-                  : 'Tap to select a date range',
-              style: const TextStyle(fontSize: 13),
+                  : 'Select start and end dates',
+              style: TextStyle(
+                fontSize: 14,
+                color: _customApplied ? null : Colors.grey.shade600,
+              ),
             ),
           ),
-          ElevatedButton.icon(
-            onPressed: _pickCustomRange,
-            icon: const Icon(Icons.date_range, size: 16),
-            label: const Text('Pick dates'),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -338,21 +416,27 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── 3 Stat Cards ───────────────────────────────────────────────────
-          Row(children: [
-            Expanded(child: _StatCard(
-              label: 'Total Revenue',
-              value: formatRM(_totalRevenue),
-              icon: Icons.attach_money,
-              color: _kGreen,
-            )),
-            const SizedBox(width: 8),
-            Expanded(child: _StatCard(
-              label: 'Total Orders',
-              value: '$_totalOrders',
-              icon: Icons.receipt_long,
-              color: _kBlue,
-            )),
-          ]),
+          Row(
+            children: [
+              Expanded(
+                child: _StatCard(
+                  label: 'Total Revenue',
+                  value: formatRM(_totalRevenue),
+                  icon: Icons.attach_money,
+                  color: _kGreen,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _StatCard(
+                  label: 'Total Orders',
+                  value: '$_totalOrders',
+                  icon: Icons.receipt_long,
+                  color: _kBlue,
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
           _StatCard(
             label: 'Avg per Order',
@@ -368,7 +452,13 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.07), blurRadius: 10, offset: const Offset(0, 2))],
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.07),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             padding: const EdgeInsets.fromLTRB(6, 14, 14, 6),
             child: _buildChart(bd),
@@ -381,12 +471,17 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                 ...bd.asMap().entries.map((entry) {
                   final i = entry.key;
                   final row = entry.value;
-                  final rowAvg = row.orders > 0 ? row.revenue / row.orders : null;
+                  final rowAvg = row.orders > 0
+                      ? row.revenue / row.orders
+                      : null;
                   final prev = i > 0 ? bd[i - 1] : null;
                   String? vsPrev;
                   if (prev != null && prev.revenue > 0) {
-                    final pct = (row.revenue - prev.revenue) / prev.revenue * 100;
-                    vsPrev = pct >= 0 ? '+${pct.toStringAsFixed(1)}%' : '${pct.toStringAsFixed(1)}%';
+                    final pct =
+                        (row.revenue - prev.revenue) / prev.revenue * 100;
+                    vsPrev = pct >= 0
+                        ? '+${pct.toStringAsFixed(1)}%'
+                        : '${pct.toStringAsFixed(1)}%';
                   }
                   return ListTile(
                     dense: true,
@@ -396,7 +491,9 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                             vsPrev,
                             style: TextStyle(
                               fontSize: 11,
-                              color: vsPrev.startsWith('+') ? _kGreen : Colors.red,
+                              color: vsPrev.startsWith('+')
+                                  ? _kGreen
+                                  : Colors.red,
                             ),
                           )
                         : null,
@@ -406,11 +503,17 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                       children: [
                         Text(
                           formatRM(row.revenue),
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                         Text(
                           '${row.orders} orders${rowAvg != null ? ' · ${formatRM(rowAvg)} avg' : ''}',
-                          style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade600,
+                          ),
                         ),
                       ],
                     ),
@@ -418,15 +521,31 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                 }),
                 const Divider(height: 1),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(children: [
-                    const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const Spacer(),
-                    Text(formatRM(_totalRevenue),
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 12),
-                    Text('$_totalOrders orders', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  ]),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Total',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      Text(
+                        formatRM(_totalRevenue),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        '$_totalOrders orders',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -438,27 +557,41 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
 
   Widget _buildChart(List<_DataPoint> bd) {
     final maxRev = bd.map((e) => e.revenue).fold(0.0, max);
-    if (maxRev == 0) return const Center(child: Text('No data', style: TextStyle(color: Colors.grey)));
+    if (maxRev == 0) {
+      return const Center(
+        child: Text('No data', style: TextStyle(color: Colors.grey)),
+      );
+    }
 
     // dynamic bar width based on count
-    double barW = bd.length > 30 ? 4 : bd.length > 15 ? 8 : 14;
+    double barW = bd.length > 30
+        ? 4
+        : bd.length > 15
+        ? 8
+        : 14;
     // label interval so we show ~8 labels max
     final step = max(1, (bd.length / 8).ceil());
 
     return BarChart(
       BarChartData(
         maxY: maxRev * 1.22,
-        barGroups: bd.asMap().entries.map((e) => BarChartGroupData(
-          x: e.key,
-          barRods: [
-            BarChartRodData(
-              toY: e.value.revenue,
-              width: barW,
-              color: _kGreen,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ],
-        )).toList(),
+        barGroups: bd
+            .asMap()
+            .entries
+            .map(
+              (e) => BarChartGroupData(
+                x: e.key,
+                barRods: [
+                  BarChartRodData(
+                    toY: e.value.revenue,
+                    width: barW,
+                    color: _kGreen,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ],
+              ),
+            )
+            .toList(),
         borderData: FlBorderData(show: false),
         gridData: FlGridData(
           show: true,
@@ -468,8 +601,12 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
               FlLine(color: Colors.grey.shade200, strokeWidth: 1),
         ),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -477,11 +614,15 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
               interval: step.toDouble(),
               getTitlesWidget: (v, _) {
                 final i = v.toInt();
-                if (i < 0 || i >= bd.length || i % step != 0) return const SizedBox.shrink();
+                if (i < 0 || i >= bd.length || i % step != 0) {
+                  return const SizedBox.shrink();
+                }
                 return Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text(bd[i].label,
-                      style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                  child: Text(
+                    bd[i].label,
+                    style: const TextStyle(fontSize: 9, color: Colors.grey),
+                  ),
                 );
               },
             ),
@@ -495,7 +636,10 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                 final s = v >= 1000
                     ? '${(v / 1000).toStringAsFixed(1)}k'
                     : v.toStringAsFixed(0);
-                return Text(s, style: const TextStyle(fontSize: 9, color: Colors.grey));
+                return Text(
+                  s,
+                  style: const TextStyle(fontSize: 9, color: Colors.grey),
+                );
               },
             ),
           ),
@@ -506,7 +650,11 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
               final row = bd[group.x];
               return BarTooltipItem(
                 '${row.label}\n',
-                const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
                 children: [
                   TextSpan(
                     text: formatRM(rod.toY),
@@ -514,7 +662,10 @@ class _SalesReportScreenState extends ConsumerState<SalesReportScreen> {
                   ),
                   TextSpan(
                     text: '\n${row.orders} orders',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 10),
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.75),
+                      fontSize: 10,
+                    ),
                   ),
                 ],
               );
@@ -532,7 +683,11 @@ class _DataPoint {
   final String label;
   final double revenue;
   final int orders;
-  const _DataPoint({required this.label, required this.revenue, required this.orders});
+  const _DataPoint({
+    required this.label,
+    required this.revenue,
+    required this.orders,
+  });
 }
 
 enum _Trend { up, down, flat }
@@ -574,27 +729,42 @@ class _StatCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label, style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                  Text(
+                    label,
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                  ),
                   const SizedBox(height: 3),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(
-                        child: Text(value,
-                            style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                                color: color)),
+                        child: Text(
+                          value,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: color,
+                          ),
+                        ),
                       ),
                       if (trend == _Trend.up)
-                        const Icon(Icons.trending_up_rounded,
-                            color: Color(0xFF10B981), size: 20),
+                        const Icon(
+                          Icons.trending_up_rounded,
+                          color: Color(0xFF10B981),
+                          size: 20,
+                        ),
                       if (trend == _Trend.down)
-                        const Icon(Icons.trending_down_rounded,
-                            color: Colors.red, size: 20),
+                        const Icon(
+                          Icons.trending_down_rounded,
+                          color: Colors.red,
+                          size: 20,
+                        ),
                       if (trend == _Trend.flat)
-                        Icon(Icons.trending_flat_rounded,
-                            color: Colors.orange.shade400, size: 20),
+                        Icon(
+                          Icons.trending_flat_rounded,
+                          color: Colors.orange.shade400,
+                          size: 20,
+                        ),
                     ],
                   ),
                   if (trend != null)
@@ -604,15 +774,15 @@ class _StatCard extends StatelessWidget {
                         trend == _Trend.up
                             ? 'Avg/order trending up'
                             : trend == _Trend.down
-                                ? 'Avg/order trending down'
-                                : 'Avg/order stable',
+                            ? 'Avg/order trending down'
+                            : 'Avg/order stable',
                         style: TextStyle(
                           fontSize: 10,
                           color: trend == _Trend.up
                               ? const Color(0xFF10B981)
                               : trend == _Trend.down
-                                  ? Colors.red
-                                  : Colors.orange.shade400,
+                              ? Colors.red
+                              : Colors.orange.shade400,
                         ),
                       ),
                     ),

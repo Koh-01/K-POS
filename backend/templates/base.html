@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}POS Admin{% endblock %}</title>
+  <title>{% block title %}K POS{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <style>
@@ -90,12 +91,14 @@
             aria-controls="mobileSidebar">
       <i class="bi bi-list fs-4"></i>
     </button>
-    <a class="navbar-brand fw-bold mb-0" href="/web/dashboard">
-      <i class="bi bi-shop me-1"></i>POS Admin
+    <a class="navbar-brand fw-bold mb-0 d-flex align-items-center gap-2" href="/web/dashboard">
+      {% include "_kts_logo.html" %}K POS
     </a>
   </div>
   <div class="d-flex align-items-center gap-2">
     <span class="text-light small d-none d-sm-inline">
+      <i class="bi bi-shop me-1"></i>{{ user.restaurant.name }}
+      <span class="mx-2 text-secondary">·</span>
       <i class="bi bi-person-circle me-1"></i>{{ user.full_name }}
     </span>
     <a href="/web/logout" class="btn btn-outline-light btn-sm">
@@ -108,7 +111,7 @@
 <!-- ── Mobile Offcanvas Sidebar ── -->
 <div class="offcanvas offcanvas-start d-lg-none" tabindex="-1" id="mobileSidebar">
   <div class="offcanvas-header">
-    <span class="fw-bold text-white"><i class="bi bi-shop me-2"></i>POS Admin</span>
+    <span class="fw-bold text-white d-flex align-items-center gap-2">{% include "_kts_logo.html" %}K POS</span>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
   </div>
   <div class="offcanvas-body p-0">

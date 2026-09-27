@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/auth_provider.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../../shared/widgets/kts_logo.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -43,10 +44,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     await _saveUrl();
-    await ref.read(authProvider.notifier).login(
-          _userCtrl.text.trim(),
-          _passCtrl.text,
-        );
+    await ref
+        .read(authProvider.notifier)
+        .login(_userCtrl.text.trim(), _passCtrl.text);
   }
 
   @override
@@ -79,7 +79,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       KtsLogo(size: 100, onDark: true),
                       const SizedBox(height: 28),
                       const Text(
-                        'KTS POS',
+                        'K POS',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 36,
@@ -100,7 +100,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       Container(
                         width: 48,
                         height: 2,
-                        color: AppTheme.gold,
+                        color: AppTheme.primaryBlue,
                       ),
                     ],
                   ),
@@ -157,7 +157,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   KtsLogo(size: 72, onDark: true),
                   const SizedBox(height: 16),
                   const Text(
-                    'KTS POS',
+                    'K POS',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 26,
@@ -193,8 +193,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     obscure: _obscure,
                     showUrlField: _showUrlField,
                     auth: auth,
-                    onToggleObscure: () =>
-                        setState(() => _obscure = !_obscure),
+                    onToggleObscure: () => setState(() => _obscure = !_obscure),
                     onToggleUrl: () =>
                         setState(() => _showUrlField = !_showUrlField),
                     onSubmit: _submit,
@@ -257,10 +256,7 @@ class _LoginForm extends StatelessWidget {
             const SizedBox(height: 6),
             const Text(
               'Sign in to continue',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppTheme.textSecondary,
-              ),
+              style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 32),
           ] else ...[
@@ -275,10 +271,7 @@ class _LoginForm extends StatelessWidget {
             const SizedBox(height: 4),
             const Text(
               'Sign in to continue',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppTheme.textSecondary,
-              ),
+              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 24),
           ],
@@ -297,12 +290,11 @@ class _LoginForm extends StatelessWidget {
           TextFormField(
             controller: userCtrl,
             decoration: const InputDecoration(
-              labelText: 'Username',
+              labelText: 'Email or cashier username',
               prefixIcon: Icon(Icons.person_outline),
             ),
             textInputAction: TextInputAction.next,
-            validator: (v) =>
-                v == null || v.isEmpty ? 'Enter username' : null,
+            validator: (v) => v == null || v.isEmpty ? 'Enter email or username' : null,
           ),
           const SizedBox(height: 14),
           TextFormField(
@@ -313,15 +305,16 @@ class _LoginForm extends StatelessWidget {
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
                 icon: Icon(
-                  obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  obscure
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
                 ),
                 onPressed: onToggleObscure,
               ),
             ),
             textInputAction: TextInputAction.done,
             onFieldSubmitted: (_) => onSubmit(),
-            validator: (v) =>
-                v == null || v.isEmpty ? 'Enter password' : null,
+            validator: (v) => v == null || v.isEmpty ? 'Enter password' : null,
           ),
           if (auth.error != null) ...[
             const SizedBox(height: 14),
@@ -336,8 +329,11 @@ class _LoginForm extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline,
-                      color: AppTheme.danger, size: 18),
+                  const Icon(
+                    Icons.error_outline,
+                    color: AppTheme.danger,
+                    size: 18,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -365,6 +361,17 @@ class _LoginForm extends StatelessWidget {
                     ),
                   )
                 : const Text('Sign In'),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: auth.isLoading
+                ? null
+                : () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const RegisterScreen(),
+                      ),
+                    ),
+            child: const Text('Create a restaurant Admin account'),
           ),
           const SizedBox(height: 6),
           TextButton.icon(

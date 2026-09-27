@@ -11,6 +11,7 @@ from database import get_db
 from dependencies import get_current_user, require_admin, require_permission
 import models
 import schemas
+from image_utils import load_upload_image
 
 
 class _ReorderItem(BaseModel):
@@ -232,22 +233,27 @@ def upload_product_image(
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WebP images are accepted")
 
-    # 删掉旧图片
-    if product.image_path:
-        old_file = UPLOAD_DIR / Path(product.image_path).name
-        old_file.unlink(missing_ok=True)
+    old_file = (
+        UPLOAD_DIR / Path(product.image_path).name
+        if product.image_path
+        else None
+    )
 
     # 压缩 & 存储
     ext = ".jpg"
     filename = f"{uuid.uuid4().hex}{ext}"
     dest = UPLOAD_DIR / filename
 
-    img = Image.open(file.file)
-    img = img.convert("RGB")
+    try:
+        img = load_upload_image(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     img.thumbnail(MAX_IMAGE_SIZE, Image.LANCZOS)
     img.save(dest, format="JPEG", quality=IMAGE_QUALITY, optimize=True)
 
     product.image_path = f"static/images/{filename}"
     db.commit()
+    if old_file:
+        old_file.unlink(missing_ok=True)
     db.refresh(product)
     return product

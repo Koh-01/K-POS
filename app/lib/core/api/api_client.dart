@@ -27,35 +27,40 @@ class ApiClient {
   }
 
   static Dio _build() {
-    final dio = Dio(BaseOptions(
-      connectTimeout: ApiConstants.connectTimeout,
-      receiveTimeout: ApiConstants.receiveTimeout,
-      headers: {'Content-Type': 'application/json'},
-    ));
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: ApiConstants.connectTimeout,
+        receiveTimeout: ApiConstants.receiveTimeout,
+        headers: {'Content-Type': 'application/json'},
+      ),
+    );
 
-    dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        final prefs = await SharedPreferences.getInstance();
-        options.baseUrl = prefs.getString('base_url') ?? ApiConstants.defaultBaseUrl;
-        _lastBaseUrl = options.baseUrl;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          final prefs = await SharedPreferences.getInstance();
+          options.baseUrl =
+              prefs.getString('base_url') ?? ApiConstants.defaultBaseUrl;
+          _lastBaseUrl = options.baseUrl;
 
-        final token = await TokenStorage.read();
-        if (token != null) {
-          options.headers['Authorization'] = 'Bearer $token';
-        }
-        return handler.next(options);
-      },
-      onError: (DioException e, handler) {
-        return handler.reject(
-          DioException(
-            requestOptions: e.requestOptions,
-            error: ApiException.fromDio(e),
-            response: e.response,
-            type: e.type,
-          ),
-        );
-      },
-    ));
+          final token = await TokenStorage.read();
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+          return handler.next(options);
+        },
+        onError: (DioException e, handler) {
+          return handler.reject(
+            DioException(
+              requestOptions: e.requestOptions,
+              error: ApiException.fromDio(e),
+              response: e.response,
+              type: e.type,
+            ),
+          );
+        },
+      ),
+    );
 
     return dio;
   }

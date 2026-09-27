@@ -7,12 +7,14 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from PIL import Image
 
 from database import get_db
-from dependencies import get_current_user, require_admin
+from dependencies import get_current_user, require_permission
 import models
 import schemas
+from image_utils import load_upload_image
 
 RECEIPT_DIR = Path(__file__).parent / "static" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -57,12 +59,19 @@ def create_cash_record(
         raise HTTPException(status_code=400, detail="type must be 'cash_in' or 'cash_out'")
     if data.amount <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
+    if data.offline_ref:
+        existing = db.query(models.CashRecord).filter(
+            models.CashRecord.offline_ref == data.offline_ref
+        ).first()
+        if existing:
+            return existing
 
     description = data.description.strip()
     if not description:
         description = "Cash In" if data.type == "cash_in" else "Cash Out"
 
     record = models.CashRecord(
+        offline_ref=data.offline_ref,
         type=data.type,
         amount=data.amount,
         description=description,
@@ -71,7 +80,17 @@ def create_cash_record(
         created_by=current_user.id,
     )
     db.add(record)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if data.offline_ref:
+            existing = db.query(models.CashRecord).filter(
+                models.CashRecord.offline_ref == data.offline_ref
+            ).first()
+            if existing:
+                return existing
+        raise HTTPException(status_code=409, detail="Cash record already exists")
     db.refresh(record)
     return record
 
@@ -80,10 +99,18 @@ def create_cash_record(
 def get_cash_record(
     record_id: int,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: models.User = Depends(
+        require_permission("can_view_cash", default_for_cashier=True)
+    ),
 ):
     record = db.query(models.CashRecord).filter(models.CashRecord.id == record_id).first()
     if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    if (
+        current_user.role != "admin"
+        and (current_user.permissions or {}).get("hide_salary_from_cash", False)
+        and record.category == "Salary"
+    ):
         raise HTTPException(status_code=404, detail="Record not found")
     return record
 
@@ -139,7 +166,7 @@ def upload_receipt(
     record_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_permission("can_edit_cash", default_for_cashier=True)),
 ):
     record = db.query(models.CashRecord).filter(models.CashRecord.id == record_id).first()
     if not record:
@@ -147,18 +174,25 @@ def upload_receipt(
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WebP images are accepted")
 
-    if record.receipt_image_path:
-        old = RECEIPT_DIR / Path(record.receipt_image_path).name
-        old.unlink(missing_ok=True)
+    old = (
+        RECEIPT_DIR / Path(record.receipt_image_path).name
+        if record.receipt_image_path
+        else None
+    )
 
     filename = f"{uuid.uuid4().hex}.jpg"
     dest = RECEIPT_DIR / filename
-    img = Image.open(file.file).convert("RGB")
+    try:
+        img = load_upload_image(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     img.thumbnail((1200, 1200), Image.LANCZOS)
     img.save(dest, format="JPEG", quality=85, optimize=True)
 
     record.receipt_image_path = f"static/receipts/{filename}"
     db.commit()
+    if old:
+        old.unlink(missing_ok=True)
     db.refresh(record)
     return record
 
@@ -168,13 +202,20 @@ def export_cash_csv(
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user: models.User = Depends(
+        require_permission("can_view_cash", default_for_cashier=True)
+    ),
 ):
     q = db.query(models.CashRecord)
     if start_date:
         q = q.filter(models.CashRecord.created_at >= datetime.combine(start_date, time.min))
     if end_date:
         q = q.filter(models.CashRecord.created_at <= datetime.combine(end_date, time.max))
+    if (
+        current_user.role != "admin"
+        and (current_user.permissions or {}).get("hide_salary_from_cash", False)
+    ):
+        q = q.filter(models.CashRecord.category != "Salary")
     records = q.order_by(models.CashRecord.created_at).all()
 
     output = io.StringIO()

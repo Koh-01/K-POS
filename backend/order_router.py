@@ -1,9 +1,11 @@
-from datetime import datetime, timezone
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
-from dependencies import get_current_user
+from dependencies import get_current_user, require_admin
+from time_utils import local_now
 import models
 import schemas
 
@@ -11,21 +13,10 @@ router = APIRouter()
 
 
 def _generate_order_number(db: Session) -> str:
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
-    prefix = f"ORD-{today}-"
-    last = (
-        db.query(models.Order)
-        .filter(models.Order.order_number.like(f"{prefix}%"))
-        .order_by(models.Order.id.desc())
-        .first()
-    )
-    seq = 1
-    if last:
-        try:
-            seq = int(last.order_number.split("-")[-1]) + 1
-        except ValueError:
-            pass
-    return f"{prefix}{seq:03d}"
+    # Timestamp + random suffix avoids duplicate numbers when multiple POS
+    # devices create an order in the same transaction window.
+    now = local_now()
+    return f"ORD-{now:%Y%m%d-%H%M%S}-{uuid4().hex[:6].upper()}"
 
 
 def _set_table_status(db: Session, table_id: int | None, status: str):
@@ -34,6 +25,23 @@ def _set_table_status(db: Session, table_id: int | None, status: str):
     table = db.query(models.Table).filter(models.Table.id == table_id).first()
     if table:
         table.status = status
+
+
+def _validated_weight(product: models.Product, weight_kg):
+    """Keep item pricing mode consistent with the product catalogue."""
+    if product.sold_by_weight:
+        if weight_kg is None or weight_kg <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product {product.id} requires a positive weight_kg",
+            )
+        return weight_kg
+    if weight_kg is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Product {product.id} is sold by quantity, not weight",
+        )
+    return None
 
 
 # ── Tables ────────────────────────────────────────────────────────────────────
@@ -48,7 +56,7 @@ def list_tables(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.post("/tables", response_model=schemas.TableResponse, status_code=201)
-def create_table(data: schemas.TableCreate, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def create_table(data: schemas.TableCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
     if db.query(models.Table).filter(models.Table.name == data.name).first():
         raise HTTPException(status_code=400, detail="Table name already exists")
     table = models.Table(name=data.name, capacity=data.capacity, sort_order=data.sort_order)
@@ -63,7 +71,7 @@ def update_table(
     table_id: int,
     data: schemas.TableUpdate,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     table = db.query(models.Table).filter(models.Table.id == table_id).first()
     if not table:
@@ -87,7 +95,7 @@ def update_table(
 
 
 @router.delete("/tables/{table_id}", status_code=204)
-def delete_table(table_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def delete_table(table_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
     table = db.query(models.Table).filter(models.Table.id == table_id).first()
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -128,10 +136,18 @@ def create_order(
     if data.order_type not in ("dine_in", "take_away"):
         raise HTTPException(status_code=400, detail="order_type must be 'dine_in' or 'take_away'")
 
+    if data.offline_ref:
+        existing = db.query(models.Order).filter(
+            models.Order.offline_ref == data.offline_ref,
+            models.Order.is_deleted == False,
+        ).first()
+        if existing:
+            return existing
+
     if data.order_type == "dine_in" and data.table_id is not None:
         table = db.query(models.Table).filter(
             models.Table.id == data.table_id, models.Table.is_active == True
-        ).first()
+        ).with_for_update().first()
         if not table:
             raise HTTPException(status_code=404, detail="Table not found or inactive")
         if table.status == "occupied":
@@ -144,6 +160,7 @@ def create_order(
         order_type=data.order_type,
         notes=data.notes,
         created_by=current_user.id,
+        offline_ref=data.offline_ref,
     )
     db.add(order)
     db.flush()  # 拿到 order.id
@@ -162,14 +179,24 @@ def create_order(
             product_id=product.id,
             quantity=item_data.quantity,
             unit_price=product.price,
-            weight_kg=item_data.weight_kg,
+            weight_kg=_validated_weight(product, item_data.weight_kg),
             notes=item_data.notes,
         ))
 
     if data.order_type == "dine_in" and data.table_id:
         _set_table_status(db, data.table_id, "occupied")
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if data.offline_ref:
+            existing = db.query(models.Order).filter(
+                models.Order.offline_ref == data.offline_ref,
+            ).first()
+            if existing:
+                return existing
+        raise HTTPException(status_code=409, detail="Order already exists")
     db.refresh(order)
     return order
 
@@ -195,7 +222,7 @@ def update_order(
         models.Order.id == order_id,
         models.Order.is_deleted == False,
         models.Order.status == "open",
-    ).first()
+    ).with_for_update().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or not open")
     if data.notes is not None:
@@ -204,6 +231,29 @@ def update_order(
         if data.order_type not in ("dine_in", "take_away"):
             raise HTTPException(status_code=400, detail="order_type must be 'dine_in' or 'take_away'")
         order.order_type = data.order_type
+
+    if "table_id" in data.model_fields_set:
+        new_table = None
+        if data.table_id is not None:
+            new_table = db.query(models.Table).filter(
+                models.Table.id == data.table_id,
+                models.Table.is_active == True,
+            ).with_for_update().first()
+            if not new_table:
+                raise HTTPException(status_code=404, detail="Table not found or inactive")
+            if new_table.status == "occupied" and data.table_id != order.table_id:
+                raise HTTPException(status_code=409, detail="Table is already occupied")
+        if order.table_id != data.table_id:
+            _set_table_status(db, order.table_id, "available")
+            if new_table:
+                new_table.status = "occupied"
+            order.table_id = data.table_id
+    if "table_name" in data.model_fields_set:
+        order.table_name = data.table_name
+
+    if order.order_type == "take_away" and order.table_id is not None:
+        _set_table_status(db, order.table_id, "available")
+        order.table_id = None
 
     if data.items is not None:
         products: dict[int, models.Product] = {}
@@ -224,7 +274,7 @@ def update_order(
                 product_id=product.id,
                 quantity=item_data.quantity,
                 unit_price=product.price,
-                weight_kg=item_data.weight_kg,
+                weight_kg=_validated_weight(product, item_data.weight_kg),
                 notes=item_data.notes,
             ))
 
@@ -241,7 +291,7 @@ def delete_order(
 ):
     order = db.query(models.Order).filter(
         models.Order.id == order_id, models.Order.is_deleted == False
-    ).first()
+    ).with_for_update().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status == "paid":
@@ -269,13 +319,13 @@ def change_table(
         models.Order.id == order_id,
         models.Order.is_deleted == False,
         models.Order.status == "open",
-    ).first()
+    ).with_for_update().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or not open")
 
     new_table = db.query(models.Table).filter(
         models.Table.id == new_table_id, models.Table.is_active == True
-    ).first()
+    ).with_for_update().first()
     if not new_table:
         raise HTTPException(status_code=404, detail="Target table not found or inactive")
     if new_table.status == "occupied" and new_table_id != order.table_id:
@@ -309,19 +359,17 @@ def combine_orders(
     if source_id == order_id:
         raise HTTPException(status_code=400, detail="Cannot combine an order with itself")
 
-    target = db.query(models.Order).filter(
-        models.Order.id == order_id,
+    locked = db.query(models.Order).filter(
+        models.Order.id.in_([order_id, source_id]),
         models.Order.is_deleted == False,
         models.Order.status == "open",
-    ).first()
+    ).order_by(models.Order.id).with_for_update().all()
+    by_id = {order.id: order for order in locked}
+    target = by_id.get(order_id)
     if not target:
         raise HTTPException(status_code=404, detail="Target order not found or not open")
 
-    source = db.query(models.Order).filter(
-        models.Order.id == source_id,
-        models.Order.is_deleted == False,
-        models.Order.status == "open",
-    ).first()
+    source = by_id.get(source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source order not found or not open")
 
@@ -329,7 +377,8 @@ def combine_orders(
         item.order_id = target.id
 
     source.status = "cancelled"
-    _set_table_status(db, source.table_id, "available")
+    if source.table_id != target.table_id:
+        _set_table_status(db, source.table_id, "available")
     db.commit()
     db.refresh(target)
     return target
@@ -348,7 +397,7 @@ def add_order_item(
         models.Order.id == order_id,
         models.Order.is_deleted == False,
         models.Order.status == "open",
-    ).first()
+    ).with_for_update().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or not open")
 
@@ -365,7 +414,7 @@ def add_order_item(
         product_id=product.id,
         quantity=data.quantity,
         unit_price=product.price,
-        weight_kg=data.weight_kg,
+        weight_kg=_validated_weight(product, data.weight_kg),
         notes=data.notes,
     )
     db.add(item)
@@ -382,21 +431,21 @@ def update_order_item(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id, models.Order.status == "open"
+    ).with_for_update().first()
+    if not order:
+        raise HTTPException(status_code=400, detail="Order is not open")
     item = db.query(models.OrderItem).filter(
         models.OrderItem.id == item_id,
         models.OrderItem.order_id == order_id,
     ).first()
     if not item:
         raise HTTPException(status_code=404, detail="Order item not found")
-    order = db.query(models.Order).filter(
-        models.Order.id == order_id, models.Order.status == "open"
-    ).first()
-    if not order:
-        raise HTTPException(status_code=400, detail="Order is not open")
     if data.quantity is not None:
-        if data.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be > 0")
         item.quantity = data.quantity
+    if "weight_kg" in data.model_fields_set:
+        item.weight_kg = _validated_weight(item.product, data.weight_kg)
     if data.notes is not None:
         item.notes = data.notes
     db.commit()
@@ -411,16 +460,16 @@ def delete_order_item(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id, models.Order.status == "open"
+    ).with_for_update().first()
+    if not order:
+        raise HTTPException(status_code=400, detail="Order is not open")
     item = db.query(models.OrderItem).filter(
         models.OrderItem.id == item_id,
         models.OrderItem.order_id == order_id,
     ).first()
     if not item:
         raise HTTPException(status_code=404, detail="Order item not found")
-    order = db.query(models.Order).filter(
-        models.Order.id == order_id, models.Order.status == "open"
-    ).first()
-    if not order:
-        raise HTTPException(status_code=400, detail="Order is not open")
     db.delete(item)
     db.commit()

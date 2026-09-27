@@ -11,7 +11,8 @@ class RestaurantTable {
     this.currentOrderId,
   });
 
-  factory RestaurantTable.fromJson(Map<String, dynamic> json) => RestaurantTable(
+  factory RestaurantTable.fromJson(Map<String, dynamic> json) =>
+      RestaurantTable(
         id: json['id'] as int,
         name: json['name'] as String,
         status: json['status'] as String? ?? 'available',

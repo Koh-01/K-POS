@@ -5,19 +5,22 @@ Auth: JWT stored in httpOnly cookie "pos_web_token" (30-day expiry).
 """
 import csv
 import io
+import os
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
 
 from reportlab.lib.pagesizes import A7
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas as rl_canvas
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import func
+from sqlalchemy import Numeric, case, cast, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 import models
@@ -25,6 +28,16 @@ from auth import verify_password
 from database import get_db
 from report_router import _sales_query, _top_products_query, _to_decimal
 from token_utils import create_access_token, decode_access_token
+from time_utils import local_now, local_today
+from login_limiter import login_limiter
+from image_utils import load_upload_image
+from payment_cash_records import sync_payment_cash_records
+from auth_router import _send_verification_safely
+from email_service import email_delivery_configured
+from registration_service import register_admin, resend_verification, verify_email_token
+from tenant_database import select_for_user, sync_user_shadow
+import drive_connections
+import schemas
 
 TEMPLATES = Jinja2Templates(env=Environment(
     loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
@@ -32,6 +45,7 @@ TEMPLATES = Jinja2Templates(env=Environment(
     cache_size=0,
 ))
 router = APIRouter(prefix="/web", include_in_schema=False)
+
 
 _MONTH_NAMES = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -45,25 +59,47 @@ class WebLoginRequired(Exception):
     pass
 
 
+def _enforce_same_origin(request: Request) -> None:
+    """Reject cross-site cookie-authenticated mutations (basic CSRF guard)."""
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source:
+        raise HTTPException(status_code=403, detail="Missing request origin")
+    source_host = urlsplit(source).netloc.lower()
+    expected_host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or ""
+    ).lower()
+    if source_host != expected_host:
+        raise HTTPException(status_code=403, detail="Cross-site request rejected")
+
+
 def _require_web_admin(
     request: Request, db: Session = Depends(get_db)
 ) -> models.User:
+    _enforce_same_origin(request)
     token = request.cookies.get("pos_web_token")
     if not token:
         raise WebLoginRequired()
     payload = decode_access_token(token)
     if not payload:
         raise WebLoginRequired()
-    user = (
-        db.query(models.User)
-        .filter(
-            models.User.username == payload.get("sub"),
-            models.User.is_active == True,
-            models.User.role == "admin",
-        )
-        .first()
+    user_id = payload.get("uid")
+    query = db.query(models.User).filter(
+        models.User.is_active == True,
+        models.User.is_deleted == False,
+        models.User.role == "admin",
     )
-    if not user:
+    user = query.filter(models.User.id == user_id).first() if user_id else query.filter(
+        models.User.username == payload.get("sub")
+    ).first()
+    if not user or (user.email and not user.email_verified):
+        raise WebLoginRequired()
+    try:
+        select_for_user(db, user)
+    except HTTPException:
         raise WebLoginRequired()
     return user
 
@@ -91,7 +127,11 @@ def _put_setting(db: Session, key: str, value: str) -> None:
 
 @router.get("/login", response_class=HTMLResponse)
 async def get_login(request: Request):
-    return TEMPLATES.TemplateResponse(request, "login.html")
+    return TEMPLATES.TemplateResponse(
+        request,
+        "login.html",
+        {"verified": request.query_params.get("verified")},
+    )
 
 
 @router.post("/login")
@@ -101,19 +141,34 @@ async def post_login(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    _enforce_same_origin(request)
+    client_key = request.client.host if request.client else "unknown"
+    if not login_limiter.allowed(client_key):
+        return TEMPLATES.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Too many failed attempts. Try again in 15 minutes."},
+            status_code=429,
+        )
+    identifier = username.strip().lower()
     user = (
         db.query(models.User)
         .filter(
-            models.User.username == username,
-            models.User.is_active == True,
+            or_(
+                func.lower(models.User.username) == identifier,
+                func.lower(models.User.email) == identifier,
+            ),
+            models.User.is_deleted == False,
             models.User.role == "admin",
         )
         .first()
     )
-    ok = user is not None and verify_password(password, user.password_hash)
+    password_matches = user is not None and verify_password(password, user.password_hash)
+    ok = password_matches and user.is_active
 
     db.add(models.LoginLog(
         user_id=user.id if user else None,
+        restaurant_id=user.restaurant_id if user else None,
         username=username,
         success=ok,
         ip_address=request.client.host if request.client else None,
@@ -121,26 +176,162 @@ async def post_login(
     ))
     db.commit()
 
+    if password_matches and user.email and not user.email_verified:
+        login_limiter.record_failure(client_key)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Please verify your email before signing in."},
+            status_code=403,
+        )
+
     if not ok:
+        login_limiter.record_failure(client_key)
         return TEMPLATES.TemplateResponse(
             request, "login.html",
             {"error": "Invalid credentials or not an admin account"},
             status_code=401,
         )
 
-    token = create_access_token({"sub": user.username, "role": user.role})
+    login_limiter.clear(client_key)
+    try:
+        select_for_user(db, user)
+    except HTTPException as exc:
+        return TEMPLATES.TemplateResponse(
+            request, "login.html", {"error": exc.detail}, status_code=exc.status_code,
+        )
+    token = create_access_token({
+        "sub": user.username,
+        "uid": user.id,
+        "restaurant_id": user.restaurant_id,
+        "role": user.role,
+    })
     resp = RedirectResponse(url="/web/dashboard", status_code=303)
+    cookie_secure = os.getenv("WEB_COOKIE_SECURE", "true").lower() != "false"
     resp.set_cookie(
-        "pos_web_token", token, httponly=True,
-        max_age=30 * 24 * 3600, samesite="lax",
+        "pos_web_token", token, httponly=True, secure=cookie_secure,
+        max_age=30 * 24 * 3600, samesite="lax", path="/web",
     )
     return resp
+
+
+@router.get("/register", response_class=HTMLResponse)
+async def get_register(request: Request):
+    return TEMPLATES.TemplateResponse(request, "register.html")
+
+
+@router.post("/register", response_class=HTMLResponse)
+async def post_register(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    restaurant_name: str = Form(...),
+    full_name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _enforce_same_origin(request)
+    if password != confirm_password:
+        return TEMPLATES.TemplateResponse(
+            request, "register.html", {"error": "Passwords do not match"}, status_code=400,
+        )
+    if not email_delivery_configured():
+        return TEMPLATES.TemplateResponse(
+            request,
+            "register.html",
+            {"error": "Email verification is not configured. Contact the system operator."},
+            status_code=503,
+        )
+    try:
+        data = schemas.AdminRegistrationRequest(
+            restaurant_name=restaurant_name,
+            full_name=full_name,
+            email=email,
+            password=password,
+        )
+        user, token = register_admin(db, data)
+    except Exception as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "register.html",
+            {"error": detail, "restaurant_name": restaurant_name, "full_name": full_name, "email": email},
+            status_code=getattr(exc, "status_code", 400),
+        )
+    background_tasks.add_task(
+        _send_verification_safely,
+        user.email,
+        user.full_name or user.email,
+        data.restaurant_name,
+        token,
+    )
+    return TEMPLATES.TemplateResponse(
+        request,
+        "register.html",
+        {
+            "success": "Account created. Check your email and open the verification link before signing in.",
+            "email": user.email,
+        },
+        status_code=202,
+    )
+
+
+@router.post("/resend-verification", response_class=HTMLResponse)
+async def web_resend_verification(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    email: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _enforce_same_origin(request)
+    if not email_delivery_configured():
+        return TEMPLATES.TemplateResponse(
+            request,
+            "register.html",
+            {"error": "Email verification is not configured. Contact the system operator."},
+            status_code=503,
+        )
+    try:
+        data = schemas.ResendVerificationRequest(email=email)
+        result = resend_verification(db, data.email)
+        if result:
+            user, token = result
+            background_tasks.add_task(
+                _send_verification_safely,
+                user.email,
+                user.full_name or user.email,
+                user.restaurant.name,
+                token,
+            )
+    except Exception:
+        pass
+    return TEMPLATES.TemplateResponse(
+        request,
+        "register.html",
+        {
+            "success": "If this account is awaiting verification, a new email will be sent.",
+            "email": email,
+        },
+        status_code=202,
+    )
+
+
+@router.get("/verify-email", response_class=HTMLResponse)
+async def web_verify_email(request: Request, token: str, db: Session = Depends(get_db)):
+    try:
+        verify_email_token(db, token)
+    except HTTPException as exc:
+        return TEMPLATES.TemplateResponse(
+            request, "verify_email.html", {"error": exc.detail}, status_code=exc.status_code,
+        )
+    return RedirectResponse(url="/web/login?verified=1", status_code=303)
 
 
 @router.get("/logout")
 async def logout():
     resp = RedirectResponse(url="/web/login", status_code=303)
-    resp.delete_cookie("pos_web_token")
+    resp.delete_cookie("pos_web_token", path="/web")
     return resp
 
 
@@ -157,7 +348,7 @@ async def dashboard(
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
-    today = date.today()
+    today = local_today()
     start_dt = datetime.combine(today, time.min)
     end_dt = datetime.combine(today, time.max)
 
@@ -190,8 +381,12 @@ async def dashboard(
         models.Payment.created_at <= end_dt,
     ).scalar() or Decimal("0")
 
+    sold_amount = case(
+        (models.OrderItem.weight_kg.isnot(None), models.OrderItem.weight_kg),
+        else_=cast(models.OrderItem.quantity, Numeric(12, 3)),
+    )
     top_row = (
-        db.query(models.Product.name, func.sum(models.OrderItem.quantity).label("qty"))
+        db.query(models.Product.name, func.sum(sold_amount).label("qty"))
         .select_from(models.Payment)
         .join(models.Order, models.Order.id == models.Payment.order_id)
         .join(models.OrderItem, models.OrderItem.order_id == models.Order.id)
@@ -201,7 +396,7 @@ async def dashboard(
             models.Payment.created_at.between(start_dt, end_dt),
         )
         .group_by(models.Product.id)
-        .order_by(func.sum(models.OrderItem.quantity).desc())
+        .order_by(func.sum(sold_amount).desc())
         .first()
     )
 
@@ -226,7 +421,7 @@ async def reports_sales(
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
-    today = date.today()
+    today = local_today()
     return TEMPLATES.TemplateResponse(request, "reports_sales.html", _ctx(
         user,
         today=today.isoformat(),
@@ -243,7 +438,7 @@ async def reports_daily_json(
     start_date: str = None,
     end_date: str = None,
 ):
-    today = date.today()
+    today = local_today()
     sd = date.fromisoformat(start_date) if start_date else today - timedelta(days=29)
     ed = date.fromisoformat(end_date) if end_date else today
     report = _sales_query(sd, ed, db)
@@ -264,7 +459,7 @@ async def reports_monthly_json(
     user: models.User = Depends(_require_web_admin),
     year: int = None,
 ):
-    today = date.today()
+    today = local_today()
     if not year:
         year = today.year
     start_dt = datetime(year, 1, 1)
@@ -330,7 +525,7 @@ async def reports_annual(
     user: models.User = Depends(_require_web_admin),
     year: int = None,
 ):
-    today = date.today()
+    today = local_today()
     if not year:
         year = today.year
 
@@ -388,7 +583,7 @@ async def reports_top_products(
     start_date: str = None,
     end_date: str = None,
 ):
-    today = date.today()
+    today = local_today()
     if not start_date:
         start_date = today.replace(day=1).isoformat()
     if not end_date:
@@ -465,26 +660,161 @@ async def void_payment(
 
 # ── Cash Records ───────────────────────────────────────────────────────────────
 
+def _cash_period(
+    mode: str,
+    year: int | None,
+    month: int | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[str, date, date, int, int]:
+    today = local_today()
+    if mode == "custom":
+        start = date.fromisoformat(start_date) if start_date else today.replace(day=1)
+        end = date.fromisoformat(end_date) if end_date else today
+        if start > end:
+            raise ValueError("Start date cannot be after end date")
+        return "custom", start, end, start.year, start.month
+
+    selected_year = year or today.year
+    selected_month = month or today.month
+    if selected_year < 2000 or selected_year > today.year:
+        raise ValueError("Year is outside the available range")
+    if selected_month < 1 or selected_month > 12:
+        raise ValueError("Month must be between 1 and 12")
+    start = date(selected_year, selected_month, 1)
+    if selected_month == 12:
+        next_month = date(selected_year + 1, 1, 1)
+    else:
+        next_month = date(selected_year, selected_month + 1, 1)
+    end = next_month - timedelta(days=1)
+    return "monthly", start, end, selected_year, selected_month
+
+
+def _cash_filter_url(
+    mode: str,
+    start: date,
+    end: date,
+    year: int,
+    month: int,
+    *,
+    export: bool = False,
+) -> str:
+    if mode == "custom":
+        query = urlencode({
+            "mode": "custom",
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+        })
+    else:
+        query = urlencode({"mode": "monthly", "year": year, "month": month})
+    path = "/web/cash/export.csv" if export else "/web/cash"
+    return f"{path}?{query}"
+
+
+def _safe_cash_return_url(return_to: str) -> str:
+    return return_to if return_to.startswith("/web/cash?") else "/web/cash"
+
+
 @router.get("/cash", response_class=HTMLResponse)
 async def cash_list(
     request: Request,
+    mode: str = "monthly",
+    year: int | None = None,
+    month: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
+    error = None
+    try:
+        mode, start, end, selected_year, selected_month = _cash_period(
+            mode, year, month, start_date, end_date
+        )
+    except (TypeError, ValueError) as exc:
+        error = str(exc)
+        mode, start, end, selected_year, selected_month = _cash_period(
+            "monthly", None, None, None, None
+        )
+
+    start_dt = datetime.combine(start, time.min)
+    end_dt = datetime.combine(end, time.max)
     records = (
         db.query(models.CashRecord)
-        .order_by(models.CashRecord.id.desc())
-        .limit(100)
+        .filter(models.CashRecord.created_at.between(start_dt, end_dt))
+        .order_by(models.CashRecord.created_at.desc(), models.CashRecord.id.desc())
         .all()
     )
     total_in = sum(float(r.amount) for r in records if r.type == "cash_in")
     total_out = sum(float(r.amount) for r in records if r.type == "cash_out")
+    cash_url = _cash_filter_url(
+        mode, start, end, selected_year, selected_month
+    )
 
     return TEMPLATES.TemplateResponse(request, "cash.html", _ctx(
         user,
         records=records,
         total_in=total_in, total_out=total_out, net=total_in - total_out,
+        mode=mode,
+        selected_year=selected_year,
+        selected_month=selected_month,
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+        years=range(local_today().year, 1999, -1),
+        months=list(enumerate(_MONTH_NAMES, start=1)),
+        cash_url=cash_url,
+        cash_export_url=_cash_filter_url(
+            mode, start, end, selected_year, selected_month, export=True
+        ),
+        error=error,
     ))
+
+
+@router.get("/cash/export.csv")
+async def export_cash_records(
+    request: Request,
+    mode: str = "monthly",
+    year: int | None = None,
+    month: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(_require_web_admin),
+):
+    try:
+        mode, start, end, selected_year, selected_month = _cash_period(
+            mode, year, month, start_date, end_date
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    records = (
+        db.query(models.CashRecord)
+        .filter(models.CashRecord.created_at.between(
+            datetime.combine(start, time.min),
+            datetime.combine(end, time.max),
+        ))
+        .order_by(models.CashRecord.created_at.desc(), models.CashRecord.id.desc())
+        .all()
+    )
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Type", "Amount (RM)", "Description", "Category", "Reference"])
+    for record in records:
+        writer.writerow([
+            record.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "Cash In" if record.type == "cash_in" else "Cash Out",
+            f"{float(record.amount):.2f}",
+            record.description,
+            record.category or "",
+            record.reference or "",
+        ])
+    filename = f"cash_records_{start:%Y%m%d}_{end:%Y%m%d}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/cash")
@@ -494,6 +824,7 @@ async def add_cash_record(
     description: str = Form(...),
     category: str = Form(""),
     reference: str = Form(""),
+    return_to: str = Form("/web/cash"),
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
@@ -509,7 +840,7 @@ async def add_cash_record(
         db.commit()
     except Exception:
         pass
-    return RedirectResponse(url="/web/cash", status_code=303)
+    return RedirectResponse(url=_safe_cash_return_url(return_to), status_code=303)
 
 
 @router.post("/cash/{record_id}/edit")
@@ -520,6 +851,7 @@ async def edit_cash_record(
     description: str = Form(...),
     category: str = Form(""),
     reference: str = Form(""),
+    return_to: str = Form("/web/cash"),
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
@@ -534,12 +866,13 @@ async def edit_cash_record(
             db.commit()
         except Exception:
             pass
-    return RedirectResponse(url="/web/cash", status_code=303)
+    return RedirectResponse(url=_safe_cash_return_url(return_to), status_code=303)
 
 
 @router.post("/cash/{record_id}/delete")
 async def delete_cash_record(
     record_id: int,
+    return_to: str = Form("/web/cash"),
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
@@ -547,7 +880,7 @@ async def delete_cash_record(
     if r:
         db.delete(r)
         db.commit()
-    return RedirectResponse(url="/web/cash", status_code=303)
+    return RedirectResponse(url=_safe_cash_return_url(return_to), status_code=303)
 
 
 # ── Products ───────────────────────────────────────────────────────────────────
@@ -914,7 +1247,12 @@ async def users_list(
     updated: str = None,
     error: str = None,
 ):
-    users = db.query(models.User).order_by(models.User.id).all()
+    users = (
+        db.query(models.User)
+        .filter(models.User.is_deleted == False)
+        .order_by(models.User.id)
+        .all()
+    )
     return TEMPLATES.TemplateResponse(request, "users.html", _ctx(
         user, users=users, created=created, updated=updated, error=error,
     ))
@@ -927,23 +1265,29 @@ async def create_user(
     user: models.User = Depends(_require_web_admin),
     username: str = Form(...),
     full_name: str = Form(...),
-    role: str = Form(...),
     password: str = Form(...),
 ):
     from auth import hash_password
-    existing = db.query(models.User).filter(models.User.username == username).first()
+    username = username.strip()
+    existing = db.query(models.User).execution_options(skip_tenant_scope=True).filter(
+        func.lower(models.User.username) == username.lower()
+    ).first()
     if existing:
         return RedirectResponse(url=f"/web/users?error=Username+'{username}'+already+exists", status_code=303)
-    if role not in ("admin", "cashier"):
-        return RedirectResponse(url="/web/users?error=Invalid+role", status_code=303)
+    if len(password) < 8:
+        return RedirectResponse(url="/web/users?error=Password+must+be+at+least+8+characters", status_code=303)
     db.add(models.User(
+        restaurant_id=user.restaurant_id,
         username=username,
         full_name=full_name,
-        role=role,
+        role="cashier",
         password_hash=hash_password(password),
         is_active=True,
     ))
     db.commit()
+    created_user = db.query(models.User).filter(models.User.username == username).first()
+    if created_user:
+        sync_user_shadow(db, created_user)
     return RedirectResponse(url=f"/web/users?created={username}", status_code=303)
 
 
@@ -951,7 +1295,6 @@ async def create_user(
 async def edit_user(
     user_id: int,
     full_name: str = Form(""),
-    role: str = Form(""),
     db: Session = Depends(get_db),
     current_admin: models.User = Depends(_require_web_admin),
 ):
@@ -959,9 +1302,8 @@ async def edit_user(
     if u and u.id != current_admin.id:
         if full_name.strip():
             u.full_name = full_name.strip()
-        if role in ("admin", "cashier"):
-            u.role = role
         db.commit()
+        sync_user_shadow(db, u)
     return RedirectResponse(url="/web/users?updated=1", status_code=303)
 
 
@@ -990,6 +1332,7 @@ async def update_user_permissions_web(
     if u and u.role == "cashier":
         u.permissions = perms
         db.commit()
+        sync_user_shadow(db, u)
     return RedirectResponse(url="/web/users?updated=1", status_code=303)
 
 
@@ -1003,6 +1346,7 @@ async def toggle_user(
     if u and u.id != user.id:
         u.is_active = not u.is_active
         db.commit()
+        sync_user_shadow(db, u)
     return RedirectResponse(url="/web/users", status_code=303)
 
 
@@ -1010,14 +1354,19 @@ async def toggle_user(
 
 _SETTINGS_KEYS = [
     "store_name", "store_address", "store_phone", "store_email",
+    "store_ssm_number",
     "tax_registration_number",
     "sst_enabled", "sst_rate",
     "service_charge_enabled", "service_charge_rate",
+    "payment_to_cash_record",
     "receipt_show_logo",
     "receipt_header", "receipt_header_size", "receipt_header_align",
     "receipt_footer", "receipt_footer_size", "receipt_footer_align",
 ]
-_BOOL_SETTINGS = {"sst_enabled", "service_charge_enabled", "receipt_show_logo"}
+_BOOL_SETTINGS = {
+    "sst_enabled", "service_charge_enabled", "payment_to_cash_record",
+    "receipt_show_logo",
+}
 
 
 def _settings_ctx(db: Session) -> dict:
@@ -1035,6 +1384,8 @@ async def get_settings(
 ):
     return TEMPLATES.TemplateResponse(request, "settings.html", _ctx(
         user, s=_settings_ctx(db), saved=False,
+        drive=drive_connections.status(user.restaurant),
+        drive_msg=request.query_params.get("drive", ""),
     ))
 
 
@@ -1045,15 +1396,22 @@ async def post_settings(
     user: models.User = Depends(_require_web_admin),
 ):
     form = await request.form()
+    was_payment_to_cash_record = (
+        _get_setting(db, "payment_to_cash_record", "0") == "1"
+    )
     for k in _SETTINGS_KEYS:
         if k in _BOOL_SETTINGS:
             _put_setting(db, k, "1" if form.get(k) else "0")
         else:
             _put_setting(db, k, str(form.get(k, "")))
+    payment_to_cash_record = bool(form.get("payment_to_cash_record"))
+    if payment_to_cash_record != was_payment_to_cash_record:
+        sync_payment_cash_records(db, enabled=payment_to_cash_record)
     db.commit()
 
     return TEMPLATES.TemplateResponse(request, "settings.html", _ctx(
         user, s=_settings_ctx(db), saved=True,
+        drive=drive_connections.status(user.restaurant), drive_msg="",
     ))
 
 
@@ -1063,21 +1421,27 @@ async def web_upload_logo(
     db: Session = Depends(get_db),
     user: models.User = Depends(_require_web_admin),
 ):
-    import io as _io, uuid as _uuid
+    import uuid as _uuid
     from PIL import Image as _Image
     from pathlib import Path as _Path
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
         return RedirectResponse(url="/web/settings?error=invalid_file", status_code=303)
-    data = await file.read()
-    img = _Image.open(_io.BytesIO(data)).convert("RGB")
+    try:
+        img = load_upload_image(file)
+    except ValueError:
+        return RedirectResponse(url="/web/settings?error=invalid_file", status_code=303)
     existing = db.query(models.StoreSettings).filter(
         models.StoreSettings.key == "store_logo_path"
     ).first()
-    if existing and existing.value:
-        (_Path(__file__).parent / existing.value).unlink(missing_ok=True)
+    old_path = (
+        _Path(__file__).parent / existing.value
+        if existing and existing.value
+        else None
+    )
     upload_dir = _Path(__file__).parent / "static" / "images"
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename = f"store_logo_{_uuid.uuid4().hex[:8]}.jpg"
+    img.thumbnail((1600, 1600), _Image.Resampling.LANCZOS)
     img.save(upload_dir / filename, format="JPEG", quality=90, optimize=True)
     rel = f"static/images/{filename}"
     if existing:
@@ -1085,7 +1449,66 @@ async def web_upload_logo(
     else:
         db.add(models.StoreSettings(key="store_logo_path", value=rel))
     db.commit()
+    if old_path:
+        old_path.unlink(missing_ok=True)
     return RedirectResponse(url="/web/settings?saved=logo", status_code=303)
+
+
+# ── Google Drive (per restaurant) ──────────────────────────────────────────────
+
+_DRIVE_SETTINGS_URL = "/web/settings?drive={}#google-drive"
+
+
+@router.get("/settings/google-drive/connect")
+async def google_drive_connect(
+    request: Request,
+    user: models.User = Depends(_require_web_admin),
+):
+    if not drive_connections.oauth_configured():
+        return RedirectResponse(url=_DRIVE_SETTINGS_URL.format("not_configured"), status_code=303)
+    auth_url, nonce = drive_connections.build_authorization_url(user)
+    resp = RedirectResponse(url=auth_url, status_code=303)
+    resp.set_cookie(
+        drive_connections.STATE_COOKIE, nonce, httponly=True,
+        secure=os.getenv("WEB_COOKIE_SECURE", "true").lower() != "false",
+        max_age=600, samesite="lax", path="/web/settings/google-drive",
+    )
+    return resp
+
+
+@router.get("/settings/google-drive/callback")
+async def google_drive_callback(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(_require_web_admin),
+):
+    params = request.query_params
+    nonce = request.cookies.get(drive_connections.STATE_COOKIE)
+    if params.get("error"):
+        # The Admin pressed Cancel on Google's consent screen.
+        result = "cancelled"
+    elif not drive_connections.verify_state(params.get("state", ""), nonce, user) or not params.get("code"):
+        result = "invalid_state"
+    else:
+        try:
+            await run_in_threadpool(drive_connections.complete_connection, db, user, params["code"])
+            result = "connected"
+        except Exception as exc:
+            db.rollback()
+            print(f"[google-drive] Restaurant {user.restaurant_id} connect failed: {exc}")
+            result = "failed"
+    resp = RedirectResponse(url=_DRIVE_SETTINGS_URL.format(result), status_code=303)
+    resp.delete_cookie(drive_connections.STATE_COOKIE, path="/web/settings/google-drive")
+    return resp
+
+
+@router.post("/settings/google-drive/disconnect")
+async def google_drive_disconnect(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(_require_web_admin),
+):
+    await run_in_threadpool(drive_connections.disconnect, db, user.restaurant)
+    return RedirectResponse(url=_DRIVE_SETTINGS_URL.format("disconnected"), status_code=303)
 
 
 @router.get("/reports/annual/export")
@@ -1179,7 +1602,7 @@ async def salary_page(
         .limit(200)
         .all()
     )
-    now = datetime.now()
+    now = local_now()
     years = [now.year - 1, now.year, now.year + 1]
 
     return TEMPLATES.TemplateResponse(request, "salary.html", _ctx(
@@ -1350,7 +1773,7 @@ async def print_salary_slip(
         return RedirectResponse(url="/web/salary?tab=payments", status_code=303)
 
     store_name = _get_setting(db, "store_name", "POS System")
-    now = datetime.now()
+    now = local_now()
     printed_at = now.strftime("%d/%m/%Y %H:%M")
     month_name = _FULL_MONTH_NAMES[p.month - 1]
     position = (p.worker.position or "") if p.worker else ""

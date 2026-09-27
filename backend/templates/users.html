@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Users — POS Admin{% endblock %}
+{% block title %}Users — K POS{% endblock %}
 
 {% block content %}
 <h4 class="fw-bold mb-4">Users</h4>
@@ -26,11 +26,11 @@
 <!-- Create user form -->
 <div class="card border-0 shadow-sm mb-4">
   <div class="card-header bg-transparent fw-semibold">
-    <i class="bi bi-person-plus me-2"></i>Create New User
+    <i class="bi bi-person-plus me-2"></i>Create Cashier Account
   </div>
   <div class="card-body">
     <form method="post" action="/web/users" class="row g-3">
-      <div class="col-md-3">
+      <div class="col-md-4">
         <label class="form-label small fw-semibold">Username</label>
         <input name="username" type="text" class="form-control" required placeholder="e.g. cashier01">
       </div>
@@ -38,16 +38,9 @@
         <label class="form-label small fw-semibold">Full Name</label>
         <input name="full_name" type="text" class="form-control" required placeholder="e.g. Ali bin Ahmad">
       </div>
-      <div class="col-md-2">
-        <label class="form-label small fw-semibold">Role</label>
-        <select name="role" class="form-select">
-          <option value="cashier">Cashier</option>
-          <option value="admin">Admin</option>
-        </select>
-      </div>
-      <div class="col-md-2">
+      <div class="col-md-3">
         <label class="form-label small fw-semibold">Password</label>
-        <input name="password" type="password" class="form-control" required minlength="6">
+        <input name="password" type="password" class="form-control" required minlength="8">
       </div>
       <div class="col-md-2 d-flex align-items-end">
         <button type="submit" class="btn btn-primary w-100">
@@ -148,13 +141,6 @@
           <div class="mb-3">
             <label class="form-label fw-semibold">Full Name</label>
             <input id="editFullName" name="full_name" type="text" class="form-control" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Role</label>
-            <select id="editRole" name="role" class="form-select">
-              <option value="cashier">Cashier</option>
-              <option value="admin">Admin</option>
-            </select>
           </div>
         </div>
         <div class="modal-footer">
@@ -290,7 +276,6 @@ function openEditModal(btn) {
   const uid = btn.dataset.uid;
   document.getElementById('editForm').action = '/web/users/' + uid + '/edit';
   document.getElementById('editFullName').value = btn.dataset.fullname;
-  document.getElementById('editRole').value = btn.dataset.role;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('editModal')).show();
 }
 

@@ -1,5 +1,5 @@
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timezone
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -7,6 +7,7 @@ from database import get_db
 from dependencies import get_current_user, require_permission
 import models
 import schemas
+from time_utils import as_local_naive, local_now
 
 router = APIRouter(prefix="/promotions", tags=["Promotions"])
 
@@ -56,9 +57,10 @@ def _check_active(promo: models.Promotion, now: datetime) -> str | None:
     """Returns error message if promotion cannot be applied, else None."""
     if not promo.is_active or promo.is_deleted:
         return "Promotion is not active"
-    if promo.starts_at and now < promo.starts_at:
+    now = as_local_naive(now)
+    if promo.starts_at and now < as_local_naive(promo.starts_at):
         return "Promotion has not started yet"
-    if promo.ends_at and now > promo.ends_at:
+    if promo.ends_at and now > as_local_naive(promo.ends_at):
         return "Promotion has expired"
     return None
 
@@ -75,7 +77,7 @@ def compute_discount(
     Raises ValueError if the promotion cannot be applied to these items.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = local_now()
 
     c = promo.conditions
 
@@ -84,15 +86,13 @@ def compute_discount(
         product_ids = [int(x) for x in c.get("product_ids", [])]
         if product_ids:
             targeted = sum(
-                Decimal(str(i.unit_price)) * i.quantity
+                Decimal(str(i.subtotal))
                 for i in items if i.product_id in product_ids
             )
             if targeted == 0:
                 raise ValueError("No qualifying products in this order for the discount")
             discount_amount = (targeted * percent / 100).quantize(TWO, ROUND_HALF_UP)
-            subtotal = sum(Decimal(str(i.unit_price)) * i.quantity for i in items)
-            eff_pct = (discount_amount / subtotal * 100).quantize(TWO, ROUND_HALF_UP) if subtotal else Decimal("0")
-            return eff_pct, discount_amount, f"{percent}% off selected products"
+            return Decimal("0"), discount_amount, f"{percent}% off selected products"
         else:
             return percent, Decimal("0"), f"{percent}% off entire order"
 
@@ -107,13 +107,13 @@ def compute_discount(
 
     elif promo.type == "happy_hour":
         # check time window (use local server time for happy hour)
-        local_now = datetime.now()
+        current_local = as_local_naive(now)
         days = [int(d) for d in c.get("days", list(range(7)))]
-        if local_now.weekday() not in days:
+        if current_local.weekday() not in days:
             raise ValueError("Happy Hour: not available today")
         sh, sm = map(int, str(c["start_time"]).split(":"))
         eh, em = map(int, str(c["end_time"]).split(":"))
-        cur = local_now.hour * 60 + local_now.minute
+        cur = current_local.hour * 60 + current_local.minute
         if not (sh * 60 + sm <= cur <= eh * 60 + em):
             raise ValueError(f"Happy Hour: only valid between {c['start_time']} and {c['end_time']}")
 
@@ -121,15 +121,13 @@ def compute_discount(
         product_ids = [int(x) for x in c.get("product_ids", [])]
         if product_ids:
             targeted = sum(
-                Decimal(str(i.unit_price)) * i.quantity
+                Decimal(str(i.subtotal))
                 for i in items if i.product_id in product_ids
             )
             if targeted == 0:
                 raise ValueError("No qualifying products in this order for Happy Hour")
             discount_amount = (targeted * percent / 100).quantize(TWO, ROUND_HALF_UP)
-            subtotal = sum(Decimal(str(i.unit_price)) * i.quantity for i in items)
-            eff_pct = (discount_amount / subtotal * 100).quantize(TWO, ROUND_HALF_UP) if subtotal else Decimal("0")
-            return eff_pct, discount_amount, f"Happy Hour: {percent}% off selected products"
+            return Decimal("0"), discount_amount, f"Happy Hour: {percent}% off selected products"
         else:
             return percent, Decimal("0"), f"Happy Hour: {percent}% off"
 
@@ -140,7 +138,7 @@ def compute_discount(
         percent = Decimal(str(c.get("percent", 0)))
         min_order = Decimal(str(c.get("min_order", 0)))
         if min_order > 0:
-            subtotal = sum(Decimal(str(i.unit_price)) * i.quantity for i in items)
+            subtotal = sum(Decimal(str(i.subtotal)) for i in items)
             if subtotal < min_order:
                 raise ValueError(f"Minimum order amount of {min_order} required")
         return percent, Decimal("0"), f"Promo code applied: {percent}% off"
@@ -220,8 +218,8 @@ def create_promotion(
         name=data.name,
         type=data.type,
         conditions=data.conditions,
-        starts_at=data.starts_at,
-        ends_at=data.ends_at,
+        starts_at=as_local_naive(data.starts_at) if data.starts_at else None,
+        ends_at=as_local_naive(data.ends_at) if data.ends_at else None,
         is_active=data.is_active,
         created_by=current_user.id,
     )
@@ -251,9 +249,9 @@ def update_promotion(
         _validate_conditions(promo.type, data.conditions)
         promo.conditions = data.conditions
     if data.starts_at is not None:
-        promo.starts_at = data.starts_at
+        promo.starts_at = as_local_naive(data.starts_at)
     if data.ends_at is not None:
-        promo.ends_at = data.ends_at
+        promo.ends_at = as_local_naive(data.ends_at)
     if data.is_active is not None:
         promo.is_active = data.is_active
 
@@ -298,7 +296,7 @@ def apply_promotion_preview(
         raise HTTPException(status_code=400, detail="Order has no items")
 
     promo = _resolve_promotion(body, db)
-    now = datetime.now(timezone.utc)
+    now = local_now()
     err = _check_active(promo, now)
     if err:
         raise HTTPException(status_code=400, detail=err)

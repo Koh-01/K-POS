@@ -1,15 +1,107 @@
 {% extends "base.html" %}
-{% block title %}Cash Records — POS Admin{% endblock %}
+{% block title %}Cash Records — K POS{% endblock %}
+
+{% block extra_head %}
+<style>
+  .cash-period-tabs .nav-link {
+    color: #4a4a4a;
+  }
+  .cash-period-tabs .nav-link.active {
+    background-color: #5a5a5a;
+    color: #fff;
+  }
+</style>
+{% endblock %}
 
 {% block content %}
-<h4 class="fw-bold mb-4">Cash Records</h4>
+<div class="d-flex align-items-center gap-2 mb-3">
+  <h4 class="fw-bold mb-0 me-auto">Cash Records</h4>
+  <a href="{{ cash_export_url }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-download me-1"></i>Export CSV
+  </a>
+</div>
+
+{% if error %}
+<div class="alert alert-warning py-2">{{ error }}</div>
+{% endif %}
+
+<!-- Period filter -->
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body">
+    <ul class="nav nav-pills mb-3 cash-period-tabs">
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if mode == 'monthly' else '' }}"
+           href="/web/cash?mode=monthly&year={{ selected_year }}&month={{ selected_month }}">
+          <i class="bi bi-calendar-month me-1"></i>Monthly / 按月
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if mode == 'custom' else '' }}"
+           href="/web/cash?mode=custom&start_date={{ start_date }}&end_date={{ end_date }}">
+          <i class="bi bi-calendar-range me-1"></i>Custom / 自定义
+        </a>
+      </li>
+    </ul>
+
+    {% if mode == 'monthly' %}
+    <form method="get" action="/web/cash" class="row g-2 align-items-end">
+      <input type="hidden" name="mode" value="monthly">
+      <div class="col-6 col-md-3">
+        <label class="form-label small fw-semibold mb-1">Year / 年</label>
+        <select name="year" class="form-select">
+          {% for y in years %}
+          <option value="{{ y }}" {{ 'selected' if y == selected_year else '' }}>{{ y }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small fw-semibold mb-1">Month / 月</label>
+        <select name="month" class="form-select">
+          {% for number, name in months %}
+          <option value="{{ number }}" {{ 'selected' if number == selected_month else '' }}>
+            {{ "%02d"|format(number) }} - {{ name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-auto">
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="bi bi-search me-1"></i>Apply
+        </button>
+      </div>
+    </form>
+    {% else %}
+    <form method="get" action="/web/cash" class="row g-2 align-items-end">
+      <input type="hidden" name="mode" value="custom">
+      <div class="col-6 col-md-3">
+        <label class="form-label small fw-semibold mb-1">From / 开始</label>
+        <input type="date" name="start_date" class="form-control"
+               value="{{ start_date }}" max="{{ end_date }}" required>
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small fw-semibold mb-1">To / 结束</label>
+        <input type="date" name="end_date" class="form-control"
+               value="{{ end_date }}" min="{{ start_date }}" required>
+      </div>
+      <div class="col-12 col-md-auto">
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="bi bi-search me-1"></i>Apply
+        </button>
+      </div>
+    </form>
+    {% endif %}
+    <div class="text-muted small mt-2">
+      Showing {{ start_date }} → {{ end_date }} · {{ records|length }} record{{ '' if records|length == 1 else 's' }}
+    </div>
+  </div>
+</div>
 
 <!-- Summary -->
 <div class="row g-3 mb-4">
   <div class="col-sm-4">
     <div class="card border-0 shadow-sm">
       <div class="card-body">
-        <p class="text-muted small mb-1">Cash In (shown)</p>
+        <p class="text-muted small mb-1">Cash In (selected period)</p>
         <div class="fs-5 fw-bold text-success">RM {{ "%.2f"|format(total_in) }}</div>
       </div>
     </div>
@@ -17,7 +109,7 @@
   <div class="col-sm-4">
     <div class="card border-0 shadow-sm">
       <div class="card-body">
-        <p class="text-muted small mb-1">Cash Out (shown)</p>
+        <p class="text-muted small mb-1">Cash Out (selected period)</p>
         <div class="fs-5 fw-bold text-danger">RM {{ "%.2f"|format(total_out) }}</div>
       </div>
     </div>
@@ -37,6 +129,7 @@
   <div class="card-header bg-transparent fw-semibold">Add Record</div>
   <div class="card-body">
     <form method="post" action="/web/cash">
+      <input type="hidden" name="return_to" value="{{ cash_url }}">
       <div class="row g-2">
         <div class="col-6 col-sm-4 col-md-2">
           <label class="form-label small fw-semibold mb-1">Type</label>
@@ -128,6 +221,7 @@
             </button>
             <form method="post" action="/web/cash/{{ r.id }}/delete" class="d-inline"
                   onsubmit="return confirm('Delete this record?')">
+              <input type="hidden" name="return_to" value="{{ cash_url }}">
               <button type="submit" class="btn btn-sm btn-outline-danger">
                 <i class="bi bi-trash"></i>
               </button>
@@ -146,6 +240,7 @@
 <div class="modal fade" id="editCashModal" tabindex="-1">
   <div class="modal-dialog">
     <form method="post" id="editCashForm" action="">
+      <input type="hidden" name="return_to" value="{{ cash_url }}">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Edit Record</h5>

@@ -1,7 +1,8 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/cashier_provider.dart';
+import '../../../core/models/order.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/restaurant_table.dart';
 import '../../../shared/utils/error_utils.dart';
@@ -39,13 +40,16 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
                 label: const Text('Takeaway Order'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: Colors.orange, width: 1.5),
-                  foregroundColor: Colors.orange,
+                  side: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 1.5,
+                  ),
+                  foregroundColor: Theme.of(context).colorScheme.primary,
                 ),
                 onPressed: () {
                   ref.read(cartProvider.notifier)
                     ..clear()
-                    ..setOrderType('takeaway');
+                    ..setOrderType(OrderTypes.takeAway);
                   context.push('/cashier/order/new');
                 },
               ),
@@ -61,8 +65,11 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
                 label: const Text('Custom Table Name'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: Colors.purple, width: 1.5),
-                  foregroundColor: Colors.purple,
+                  side: BorderSide(
+                    color: Theme.of(context).colorScheme.secondary,
+                    width: 1.5,
+                  ),
+                  foregroundColor: Theme.of(context).colorScheme.secondary,
                 ),
                 onPressed: () => _customTable(context),
               ),
@@ -73,28 +80,32 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Text('DINE IN — SELECT TABLE',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey,
-                      letterSpacing: 0.8)),
+              child: Text(
+                'DINE IN — SELECT TABLE',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                  letterSpacing: 0.8,
+                ),
+              ),
             ),
           ),
           Expanded(
             child: tablesAsync.when(
-              loading: () =>
-                  const Center(child: CircularProgressIndicator()),
+              loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text(loadError(e))),
               data: (tables) => tables.isEmpty
                   ? const Center(
-                      child: Text('No tables yet.\nTap + to add one.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey)))
+                      child: Text(
+                        'No tables yet.\nTap + to add one.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        const gridPadding =
-                            EdgeInsets.fromLTRB(16, 0, 16, 80);
+                        const gridPadding = EdgeInsets.fromLTRB(16, 0, 16, 80);
                         return GridView.builder(
                           padding: gridPadding,
                           gridDelegate: responsiveGridDelegate(
@@ -104,8 +115,8 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
                             narrowAspectRatio: 1.05,
                           ),
                           itemCount: tables.length,
-                          itemBuilder: (ctx, i) => _TableCard(
-                              table: tables[i], onRefresh: _refresh),
+                          itemBuilder: (ctx, i) =>
+                              _TableCard(table: tables[i], onRefresh: _refresh),
                         );
                       },
                     ),
@@ -127,30 +138,36 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          decoration:
-              const InputDecoration(labelText: 'Table name (e.g. Table 5)'),
+          decoration: const InputDecoration(
+            labelText: 'Table name (e.g. Table 5)',
+          ),
           textCapitalization: TextCapitalization.words,
           onSubmitted: (_) => Navigator.pop(ctx, true),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Add'),
+          ),
         ],
       ),
     );
     if (confirmed == true && ctrl.text.trim().isNotEmpty && context.mounted) {
       try {
-        await ApiClient.instance
-            .post('/tables', data: {'name': ctrl.text.trim()});
+        await ApiClient.instance.post(
+          '/tables',
+          data: {'name': ctrl.text.trim()},
+        );
         _refresh();
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+            ..clearSnackBars()
+            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
       }
     }
@@ -174,8 +191,9 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
             TextField(
               controller: ctrl,
               autofocus: true,
-              decoration:
-                  const InputDecoration(labelText: 'e.g. VIP Room, Bar Seat 2'),
+              decoration: const InputDecoration(
+                labelText: 'e.g. VIP Room, Bar Seat 2',
+              ),
               textCapitalization: TextCapitalization.words,
               onSubmitted: (_) => Navigator.pop(ctx, true),
             ),
@@ -183,11 +201,13 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Confirm')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Confirm'),
+          ),
         ],
       ),
     );
@@ -233,20 +253,23 @@ class _TableCard extends ConsumerWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.table_restaurant,
-                size: 30,
-                color: occupied ? Colors.red : Colors.green.shade700),
+            Icon(
+              Icons.table_restaurant,
+              size: 30,
+              color: occupied ? Colors.red : Colors.green.shade700,
+            ),
             const SizedBox(height: 4),
-            Text(table.name,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 13),
-                textAlign: TextAlign.center),
+            Text(
+              table.name,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
             Text(
               occupied ? 'Occupied' : 'Free',
               style: TextStyle(
-                  fontSize: 11,
-                  color:
-                      occupied ? Colors.red.shade700 : Colors.green.shade700),
+                fontSize: 11,
+                color: occupied ? Colors.red.shade700 : Colors.green.shade700,
+              ),
             ),
           ],
         ),
@@ -270,14 +293,17 @@ class _TableCard extends ConsumerWidget {
               },
             ),
             ListTile(
-              leading: Icon(Icons.delete_outline,
-                  color: table.isOccupied ? Colors.grey : Colors.red),
+              leading: Icon(
+                Icons.delete_outline,
+                color: table.isOccupied ? Colors.grey : Colors.red,
+              ),
               title: Text(
                 table.isOccupied
                     ? 'Cannot delete (occupied)'
                     : 'Delete "${table.name}"',
                 style: TextStyle(
-                    color: table.isOccupied ? Colors.grey : Colors.red),
+                  color: table.isOccupied ? Colors.grey : Colors.red,
+                ),
               ),
               onTap: table.isOccupied
                   ? null
@@ -307,23 +333,28 @@ class _TableCard extends ConsumerWidget {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Save')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
         ],
       ),
     );
     if (confirmed == true && ctrl.text.trim().isNotEmpty && context.mounted) {
       try {
-        await ApiClient.instance
-            .put('/tables/${table.id}', data: {'name': ctrl.text.trim()});
+        await ApiClient.instance.put(
+          '/tables/${table.id}',
+          data: {'name': ctrl.text.trim()},
+        );
         onRefresh();
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+            ..clearSnackBars()
+            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
       }
     }
@@ -337,8 +368,9 @@ class _TableCard extends ConsumerWidget {
         content: Text('Delete "${table.name}"?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -354,7 +386,8 @@ class _TableCard extends ConsumerWidget {
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+            ..clearSnackBars()
+            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
         }
       }
     }

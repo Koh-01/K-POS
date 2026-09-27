@@ -1,10 +1,12 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
 
-final _dashboardProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+final _dashboardProvider = FutureProvider.autoDispose<Map<String, dynamic>>((
+  ref,
+) async {
   final res = await ApiClient.instance.get('/reports/dashboard');
   return res.data as Map<String, dynamic>;
 });
@@ -39,7 +41,10 @@ class DashboardScreen extends ConsumerWidget {
                     child: _StatCard(
                       label: "Today's Revenue",
                       value: formatRM(
-                          data['today_revenue'] != null ? double.parse(data['today_revenue'].toString()) : 0),
+                        data['today_revenue'] != null
+                            ? double.parse(data['today_revenue'].toString())
+                            : 0,
+                      ),
                       icon: Icons.attach_money,
                       color: const Color(0xFF10B981),
                     ),
@@ -100,24 +105,28 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: color, size: 28),
-              const SizedBox(height: 10),
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: color)),
-              const SizedBox(height: 4),
-              Text(label,
-                  style: TextStyle(
-                      color: Colors.grey.shade600, fontSize: 12)),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
-        ),
-      );
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          ),
+        ],
+      ),
+    ),
+  );
 }

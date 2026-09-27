@@ -1,29 +1,111 @@
 from decimal import Decimal as D
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, JSON
-from sqlalchemy.orm import relationship
+from sqlalchemy import (
+    Column, Integer, String, Boolean, DateTime, Numeric, ForeignKey, Text, JSON,
+    UniqueConstraint, event,
+)
+from sqlalchemy.orm import Session, declared_attr, relationship, with_loader_criteria
 from sqlalchemy.sql import func
 from database import Base
 
-class User(Base):
+
+class TenantMixin:
+    """Marks a row as belonging to exactly one restaurant."""
+
+    @declared_attr
+    def restaurant_id(cls):
+        # The default keeps old scripts/tests compatible. Request sessions
+        # always overwrite it with the authenticated user's restaurant.
+        return Column(
+            Integer,
+            ForeignKey("restaurants.id"),
+            nullable=False,
+            index=True,
+            default=1,
+            server_default="1",
+        )
+
+
+class Restaurant(Base):
+    __tablename__ = "restaurants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)
+    slug = Column(String(180), unique=True, nullable=False, index=True)
+    database_name = Column(String(64), unique=True, nullable=True)
+    database_ready = Column(Boolean, default=False, server_default="0", nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    users = relationship("User", back_populates="restaurant")
+    drive_connection = relationship(
+        "RestaurantDriveConnection", back_populates="restaurant", uselist=False
+    )
+
+
+class RestaurantDriveConnection(Base):
+    """The Google Drive account a restaurant's backups and reports go to."""
+
+    __tablename__ = "restaurant_drive_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    restaurant_id = Column(Integer, ForeignKey("restaurants.id"), unique=True, nullable=False)
+    google_email = Column(String(254), nullable=True)
+    # Fernet-encrypted OAuth refresh token (key derived from SECRET_KEY).
+    refresh_token_encrypted = Column(Text, nullable=False)
+    folder_id = Column(String(128), nullable=True)
+    connected_by_user_id = Column(Integer, nullable=True)
+    connected_at = Column(DateTime, server_default=func.now())
+    last_upload_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    restaurant = relationship("Restaurant", back_populates="drive_connection")
+
+
+class User(TenantMixin, Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
+    # Usernames are intentionally globally unique. This makes cashier login
+    # unambiguous even when many restaurants share one K POS installation.
+    username = Column(String(254), unique=True, index=True, nullable=False)
+    email = Column(String(254), unique=True, index=True, nullable=True)
+    email_verified = Column(Boolean, default=False, nullable=False)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False)  # "admin" 或 "cashier"
     full_name = Column(String(100))
     is_active = Column(Boolean, default=True)
+    # Soft deletion preserves historical foreign-key references while hiding
+    # the account from management screens and preventing future login.
+    is_deleted = Column(Boolean, default=False, nullable=False)
     # cashier permission overrides; NULL treated as all defaults
     permissions = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
+    restaurant = relationship("Restaurant", back_populates="users")
 
-class Category(Base):
-    __tablename__ = "categories"
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False)
+    restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    user = relationship("User")
+
+
+class Category(TenantMixin, Base):
+    __tablename__ = "categories"
+    __table_args__ = (UniqueConstraint("restaurant_id", "name", name="uq_category_restaurant_name"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), nullable=False)
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -32,7 +114,7 @@ class Category(Base):
     products = relationship("Product", back_populates="category")
 
 
-class Product(Base):
+class Product(TenantMixin, Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -52,11 +134,12 @@ class Product(Base):
     category = relationship("Category", back_populates="products")
 
 
-class Table(Base):
+class Table(TenantMixin, Base):
     __tablename__ = "tables"
+    __table_args__ = (UniqueConstraint("restaurant_id", "name", name="uq_table_restaurant_name"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(20), unique=True, nullable=False)   # e.g. "T01"
+    name = Column(String(20), nullable=False)   # e.g. "T01"
     capacity = Column(Integer, default=4)
     # "available" | "occupied"
     status = Column(String(20), default="available", nullable=False)
@@ -68,7 +151,7 @@ class Table(Base):
     orders = relationship("Order", back_populates="table")
 
 
-class Order(Base):
+class Order(TenantMixin, Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -91,7 +174,7 @@ class Order(Base):
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
 
 
-class OrderItem(Base):
+class OrderItem(TenantMixin, Base):
     __tablename__ = "order_items"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -119,7 +202,7 @@ class OrderItem(Base):
         return D(str(self.quantity)) * D(str(self.unit_price))
 
 
-class StoreSettings(Base):
+class StoreSettings(TenantMixin, Base):
     """
     简单 key-value 配置表，存税率开关等。
     预置 key：
@@ -127,18 +210,20 @@ class StoreSettings(Base):
       service_charge_enabled (0/1), service_charge_rate (e.g. "0.10")
     """
     __tablename__ = "store_settings"
+    __table_args__ = (UniqueConstraint("restaurant_id", "key", name="uq_setting_restaurant_key"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(50), unique=True, nullable=False)
+    key = Column(String(50), nullable=False)
     value = Column(String(100), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-class Payment(Base):
+class Payment(TenantMixin, Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    offline_ref = Column(String(100), unique=True, nullable=True, index=True)
     # "cash" | "duitnow"
     payment_method = Column(String(20), nullable=False)
     # "completed" | "voided"
@@ -168,7 +253,7 @@ class Payment(Base):
     cash_record = relationship("CashRecord")
 
 
-class PaymentAuditLog(Base):
+class PaymentAuditLog(TenantMixin, Base):
     __tablename__ = "payment_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -185,10 +270,11 @@ class PaymentAuditLog(Base):
     editor = relationship("User")
 
 
-class CashRecord(Base):
+class CashRecord(TenantMixin, Base):
     __tablename__ = "cash_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    offline_ref = Column(String(100), unique=True, nullable=True, index=True)
     # "cash_in" | "cash_out"
     type = Column(String(20), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
@@ -202,10 +288,13 @@ class CashRecord(Base):
     creator = relationship("User")
 
 
-class LoginLog(Base):
+class LoginLog(TenantMixin, Base):
     __tablename__ = "login_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Failed logins cannot always be associated with a tenant; they remain
+    # visible only to platform diagnostics, never to a restaurant admin.
+    restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     username = Column(String(50), nullable=False, index=True)
     success = Column(Boolean, nullable=False)
@@ -216,7 +305,7 @@ class LoginLog(Base):
     user = relationship("User")
 
 
-class Worker(Base):
+class Worker(TenantMixin, Base):
     __tablename__ = "workers"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -230,7 +319,7 @@ class Worker(Base):
     salary_payments = relationship("SalaryPayment", back_populates="worker")
 
 
-class SalaryPayment(Base):
+class SalaryPayment(TenantMixin, Base):
     __tablename__ = "salary_payments"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -240,6 +329,7 @@ class SalaryPayment(Base):
     amount = Column(Numeric(10, 2), nullable=False)
     note = Column(String(255), nullable=True)
     cash_record_id = Column(Integer, ForeignKey("cash_records.id"), nullable=True)
+    signature_image_path = Column(String(255), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
@@ -252,7 +342,7 @@ class SalaryPayment(Base):
         return self.worker.name if self.worker else ""
 
 
-class Promotion(Base):
+class Promotion(TenantMixin, Base):
     __tablename__ = "promotions"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -264,7 +354,7 @@ class Promotion(Base):
     #   b1f1          → {"product_id": 5}
     #   happy_hour    → {"percent": 15.0, "days": [0,1,2,3,4], "start_time": "14:00", "end_time": "17:00", "product_ids": []}
     #   promo_code    → {"code": "SAVE10", "percent": 10.0, "usage_limit": 0, "min_order": 0}
-    conditions = Column(JSON, nullable=False, default={})
+    conditions = Column(JSON, nullable=False, default=dict)
     starts_at = Column(DateTime, nullable=True)
     ends_at = Column(DateTime, nullable=True)
     usage_count = Column(Integer, default=0, nullable=False)
@@ -275,3 +365,39 @@ class Promotion(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     creator = relationship("User", foreign_keys=[created_by])
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _apply_restaurant_scope(execute_state):
+    """Automatically isolate every tenant-owned SELECT in request sessions."""
+    restaurant_id = execute_state.session.info.get("restaurant_id")
+    if restaurant_id is None or execute_state.execution_options.get("skip_tenant_scope"):
+        return
+    if execute_state.is_select:
+        execute_state.statement = execute_state.statement.options(
+            with_loader_criteria(
+                TenantMixin,
+                lambda row: row.restaurant_id == restaurant_id,
+                include_aliases=True,
+            )
+        )
+    elif execute_state.is_update or execute_state.is_delete:
+        mapper = execute_state.bind_mapper
+        if mapper is not None and issubclass(mapper.class_, TenantMixin):
+            execute_state.statement = execute_state.statement.where(
+                mapper.class_.restaurant_id == restaurant_id
+            )
+
+
+@event.listens_for(Session, "before_flush")
+def _assign_and_validate_restaurant(session, _flush_context, _instances):
+    """Assign new rows to the authenticated restaurant and reject cross-tenant writes."""
+    restaurant_id = session.info.get("restaurant_id")
+    if restaurant_id is None:
+        return
+    for row in session.new.union(session.dirty):
+        if isinstance(row, TenantMixin):
+            if row.restaurant_id is None:
+                row.restaurant_id = restaurant_id
+            elif row.restaurant_id != restaurant_id:
+                raise ValueError("Cross-restaurant write rejected")

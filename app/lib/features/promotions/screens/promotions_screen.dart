@@ -1,11 +1,12 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/promotion.dart';
 import '../../../shared/utils/error_utils.dart';
 
-final _promotionsProvider =
-    FutureProvider.autoDispose<List<Promotion>>((ref) async {
+final _promotionsProvider = FutureProvider.autoDispose<List<Promotion>>((
+  ref,
+) async {
   final res = await ApiClient.instance.get('/promotions');
   return (res.data as List)
       .map((e) => Promotion.fromJson(e as Map<String, dynamic>))
@@ -38,8 +39,7 @@ class PromotionsScreen extends ConsumerWidget {
           }
           return ListView.builder(
             itemCount: promos.length,
-            itemBuilder: (ctx, i) =>
-                _PromoTile(promo: promos[i], ref: ref),
+            itemBuilder: (ctx, i) => _PromoTile(promo: promos[i], ref: ref),
           );
         },
       ),
@@ -50,16 +50,21 @@ class PromotionsScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _showForm(BuildContext context, WidgetRef ref,
-      [Promotion? existing]) async {
+  Future<void> _showForm(
+    BuildContext context,
+    WidgetRef ref, [
+    Promotion? existing,
+  ]) async {
     // Fetch active products for B1F1 picker
     List<({int id, String name})> products = [];
     try {
       final res = await ApiClient.instance.get('/products');
       products = (res.data as List)
-          .where((p) =>
-              (p['status'] as String? ?? 'active') == 'active' &&
-              !(p['is_deleted'] as bool? ?? false))
+          .where(
+            (p) =>
+                (p['status'] as String? ?? 'active') == 'active' &&
+                !(p['is_deleted'] as bool? ?? false),
+          )
           .map((p) => (id: p['id'] as int, name: p['name'] as String))
           .toList();
     } catch (_) {}
@@ -68,22 +73,22 @@ class PromotionsScreen extends ConsumerWidget {
 
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
     final valueCtrl = TextEditingController(
-        text: existing != null && existing.percent > 0
-            ? existing.percent.toStringAsFixed(0)
-            : '');
-    final promoCodeCtrl =
-        TextEditingController(text: existing?.promoCode ?? '');
+      text: existing != null && existing.percent > 0
+          ? existing.percent.toStringAsFixed(0)
+          : '',
+    );
+    final promoCodeCtrl = TextEditingController(
+      text: existing?.promoCode ?? '',
+    );
     String type = existing?.type ?? 'discount_pct';
     bool isActive = existing?.isActive ?? true;
-    int? b1f1ProductId =
-        existing?.conditions['product_id'] as int?;
+    int? b1f1ProductId = existing?.conditions['product_id'] as int?;
 
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) => AlertDialog(
-          title:
-              Text(existing == null ? 'New Promotion' : 'Edit Promotion'),
+          title: Text(existing == null ? 'New Promotion' : 'Edit Promotion'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -91,28 +96,34 @@ class PromotionsScreen extends ConsumerWidget {
                 TextField(
                   controller: nameCtrl,
                   decoration: const InputDecoration(
-                      labelText: 'Name',
-                      border: OutlineInputBorder()),
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
-                  value: type,
+                  initialValue: type,
                   decoration: const InputDecoration(
-                      labelText: 'Type',
-                      border: OutlineInputBorder()),
+                    labelText: 'Type',
+                    border: OutlineInputBorder(),
+                  ),
                   items: const [
                     DropdownMenuItem(
-                        value: 'discount_pct',
-                        child: Text('Discount %')),
+                      value: 'discount_pct',
+                      child: Text('Discount %'),
+                    ),
                     DropdownMenuItem(
-                        value: 'b1f1',
-                        child: Text('Buy 1 Free 1')),
+                      value: 'b1f1',
+                      child: Text('Buy 1 Free 1'),
+                    ),
                     DropdownMenuItem(
-                        value: 'happy_hour',
-                        child: Text('Happy Hour')),
+                      value: 'happy_hour',
+                      child: Text('Happy Hour'),
+                    ),
                     DropdownMenuItem(
-                        value: 'promo_code',
-                        child: Text('Promo Code')),
+                      value: 'promo_code',
+                      child: Text('Promo Code'),
+                    ),
                   ],
                   onChanged: (v) => setState(() {
                     type = v!;
@@ -124,16 +135,19 @@ class PromotionsScreen extends ConsumerWidget {
                 // B1F1: product picker
                 if (type == 'b1f1') ...[
                   DropdownButtonFormField<int>(
-                    value: b1f1ProductId,
+                    initialValue: b1f1ProductId,
                     decoration: const InputDecoration(
-                        labelText: 'Product (Buy 1 Free 1)',
-                        border: OutlineInputBorder()),
+                      labelText: 'Product (Buy 1 Free 1)',
+                      border: OutlineInputBorder(),
+                    ),
                     hint: const Text('Select product'),
                     items: products
-                        .map((p) => DropdownMenuItem<int>(
-                              value: p.id,
-                              child: Text(p.name),
-                            ))
+                        .map(
+                          (p) => DropdownMenuItem<int>(
+                            value: p.id,
+                            child: Text(p.name),
+                          ),
+                        )
                         .toList(),
                     onChanged: (v) => setState(() => b1f1ProductId = v),
                   ),
@@ -142,10 +156,12 @@ class PromotionsScreen extends ConsumerWidget {
                   TextField(
                     controller: valueCtrl,
                     decoration: const InputDecoration(
-                        labelText: 'Discount % (1–100)',
-                        border: OutlineInputBorder()),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                      labelText: 'Discount % (1–100)',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                   ),
                 ],
 
@@ -154,8 +170,9 @@ class PromotionsScreen extends ConsumerWidget {
                   TextField(
                     controller: promoCodeCtrl,
                     decoration: const InputDecoration(
-                        labelText: 'Promo Code',
-                        border: OutlineInputBorder()),
+                      labelText: 'Promo Code',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 8),
@@ -170,8 +187,9 @@ class PromotionsScreen extends ConsumerWidget {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
             ElevatedButton(
               onPressed: () async {
                 final name = nameCtrl.text.trim();
@@ -179,26 +197,43 @@ class PromotionsScreen extends ConsumerWidget {
                 final code = promoCodeCtrl.text.trim();
 
                 if (name.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Name is required')));
+                  ScaffoldMessenger.of(context)
+                    ..clearSnackBars()
+                    ..showSnackBar(
+                      const SnackBar(content: Text('Name is required')),
+                    );
                   return;
                 }
                 if (type == 'b1f1' && b1f1ProductId == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  ScaffoldMessenger.of(context)
+                    ..clearSnackBars()
+                    ..showSnackBar(
                       const SnackBar(
-                          content: Text('Please select a product for Buy 1 Free 1')));
+                        content: Text(
+                          'Please select a product for Buy 1 Free 1',
+                        ),
+                      ),
+                    );
                   return;
                 }
                 if (type != 'b1f1' && (pct <= 0 || pct > 100)) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  ScaffoldMessenger.of(context)
+                    ..clearSnackBars()
+                    ..showSnackBar(
                       const SnackBar(
-                          content: Text('Enter a valid % value (1–100)')));
+                        content: Text('Enter a valid % value (1–100)'),
+                      ),
+                    );
                   return;
                 }
                 if (type == 'promo_code' && code.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  ScaffoldMessenger.of(context)
+                    ..clearSnackBars()
+                    ..showSnackBar(
                       const SnackBar(
-                          content: Text('Promo code cannot be empty')));
+                        content: Text('Promo code cannot be empty'),
+                      ),
+                    );
                   return;
                 }
 
@@ -211,7 +246,7 @@ class PromotionsScreen extends ConsumerWidget {
                   case 'b1f1':
                     conditions = {
                       'product_id': b1f1ProductId!,
-                      'product_ids': []
+                      'product_ids': [],
                     };
                   case 'happy_hour':
                     conditions = {
@@ -240,17 +275,19 @@ class PromotionsScreen extends ConsumerWidget {
                 };
                 try {
                   if (existing == null) {
-                    await ApiClient.instance
-                        .post('/promotions', data: payload);
+                    await ApiClient.instance.post('/promotions', data: payload);
                   } else {
-                    await ApiClient.instance
-                        .put('/promotions/${existing.id}', data: payload);
+                    await ApiClient.instance.put(
+                      '/promotions/${existing.id}',
+                      data: payload,
+                    );
                   }
                   ref.invalidate(_promotionsProvider);
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(friendlyError(e))));
+                    ScaffoldMessenger.of(context)
+                      ..clearSnackBars()
+                      ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
                   }
                 }
               },
@@ -273,44 +310,43 @@ class _PromoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListTile(
-        leading: CircleAvatar(
-          backgroundColor: promo.isActive
-              ? const Color(0xFFF97316).withValues(alpha: 0.15)
-              : Colors.grey.shade200,
-          child: Icon(Icons.local_offer_outlined,
-              color:
-                  promo.isActive ? const Color(0xFFF97316) : Colors.grey),
-        ),
-        title: Text(promo.name),
-        subtitle: Text(promo.summary),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: promo.isActive
-                    ? const Color(0xFF10B981).withValues(alpha: 0.15)
-                    : Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                promo.isActive ? 'Active' : 'Inactive',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: promo.isActive
-                        ? const Color(0xFF10B981)
-                        : Colors.grey),
-              ),
+    leading: CircleAvatar(
+      backgroundColor: promo.isActive
+          ? const Color(0xFFF97316).withValues(alpha: 0.15)
+          : Colors.grey.shade200,
+      child: Icon(
+        Icons.local_offer_outlined,
+        color: promo.isActive ? const Color(0xFFF97316) : Colors.grey,
+      ),
+    ),
+    title: Text(promo.name),
+    subtitle: Text(promo.summary),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: promo.isActive
+                ? const Color(0xFF10B981).withValues(alpha: 0.15)
+                : Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            promo.isActive ? 'Active' : 'Inactive',
+            style: TextStyle(
+              fontSize: 11,
+              color: promo.isActive ? const Color(0xFF10B981) : Colors.grey,
             ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              onPressed: () => _delete(context),
-            ),
-          ],
+          ),
         ),
-      );
+        IconButton(
+          icon: const Icon(Icons.delete_outline, color: Colors.red),
+          onPressed: () => _delete(context),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _delete(BuildContext context) async {
     final ok = await showDialog<bool>(
@@ -319,12 +355,13 @@ class _PromoTile extends StatelessWidget {
         title: const Text('Delete promotion?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete',
-                  style: TextStyle(color: Colors.red))),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );

@@ -6,6 +6,7 @@ from database import get_db
 from dependencies import require_admin
 import models
 import schemas
+from time_utils import local_now
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -32,7 +33,7 @@ def list_login_logs(
 # ── Data Retention ────────────────────────────────────────────────────────────
 
 def _cutoff(years: int) -> datetime:
-    return datetime.now() - timedelta(days=365 * years)
+    return local_now() - timedelta(days=365 * years)
 
 
 def _old_order_ids(db: Session, cutoff: datetime) -> list[int]:

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/payment_detail.dart';
@@ -39,11 +39,11 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
       _error = null;
     });
     try {
-      final res = await ApiClient.instance
-          .get('/payments/${widget.paymentId}/detail');
+      final res = await ApiClient.instance.get(
+        '/payments/${widget.paymentId}/detail',
+      );
       setState(() {
-        _detail =
-            PaymentDetail.fromJson(res.data as Map<String, dynamic>);
+        _detail = PaymentDetail.fromJson(res.data as Map<String, dynamic>);
         _loading = false;
       });
     } catch (e) {
@@ -61,17 +61,23 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
     setState(() => _printing = true);
     try {
       final settings = ref.read(settingsProvider).value;
+      final user = ref.read(authProvider).user;
       await ReceiptPrinter.print(
         payment: detail,
         items: detail.items,
         storeName: settings?.storeName ?? 'My Restaurant',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
+        settings: settings,
+        employeeName: user?.fullName.isNotEmpty == true
+            ? user!.fullName
+            : user?.username,
+        posName: user?.username,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Receipt printed')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(const SnackBar(content: Text('Receipt printed')));
       }
     } catch (e) {
       if (mounted) {
@@ -79,7 +85,9 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('Printer Error'),
-            content: const Text('Print failed. Make sure the printer is connected and try again.'),
+            content: const Text(
+              'Print failed. Make sure the printer is connected and try again.',
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -106,11 +114,17 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
         storeName: settings?.storeName ?? 'My Restaurant',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
+        settings: settings,
       );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Could not generate PDF. Please try again.')));
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Could not generate PDF. Please try again.'),
+            ),
+          );
       }
     }
   }
@@ -136,46 +150,53 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
   Future<void> _submitEdit(_EditResult result, PaymentDetail detail) async {
     setState(() => _submitting = true);
     try {
-      final items = detail.items.asMap().entries.map((e) {
-        final idx = e.key;
-        final item = e.value;
-        if (item.weight != null) {
-          return {
-            'product_id': item.productId,
-            'quantity': 1,
-            'weight_kg': result.weights[idx] ?? item.weight!,
-            if (item.notes != null) 'notes': item.notes,
-          };
-        } else {
-          return {
-            'product_id': item.productId,
-            'quantity': result.qtys[idx],
-            if (item.notes != null) 'notes': item.notes,
-          };
-        }
-      }).toList();
+      final items = detail.items
+          .asMap()
+          .entries
+          .where((e) {
+            return result.qtys[e.key] > 0;
+          })
+          .map((e) {
+            final idx = e.key;
+            final item = e.value;
+            if (item.weight != null) {
+              return {
+                'product_id': item.productId,
+                'quantity': 1,
+                'weight_kg': result.weights[idx] ?? item.weight!,
+                if (item.notes != null) 'notes': item.notes,
+              };
+            } else {
+              return {
+                'product_id': item.productId,
+                'quantity': result.qtys[idx],
+                if (item.notes != null) 'notes': item.notes,
+              };
+            }
+          })
+          .toList();
 
       await ApiClient.instance.put(
         '/payments/${widget.paymentId}',
         data: {
           'items': items,
           'discount_percent': detail.discountPercent,
-          'discount_amount':
-              detail.discountPercent > 0 ? 0 : detail.discount,
+          'discount_amount': detail.discountPercent > 0 ? 0 : detail.discount,
           'reason': result.reason,
         },
       );
       ref.invalidate(paymentsListProvider);
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Receipt updated')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(const SnackBar(content: Text('Receipt updated')));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -186,14 +207,17 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canManagePayment = ref.watch(authProvider).user?.canManagePayment ?? false;
+    final canManagePayment =
+        ref.watch(authProvider).user?.canManagePayment ?? false;
     final detail = _detail;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(detail != null
-            ? '${detail.locationLabel} — Receipt'
-            : 'Receipt Detail'),
+        title: Text(
+          detail != null
+              ? '${detail.locationLabel} — Receipt'
+              : 'Receipt Detail',
+        ),
         actions: [
           if (detail != null && canManagePayment && !detail.isVoided)
             _submitting
@@ -203,7 +227,9 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     ),
                   )
                 : IconButton(
@@ -211,42 +237,44 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
                     tooltip: 'Edit Receipt',
                     onPressed: _openEditSheet,
                   ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _load,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
         ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline,
-                            size: 48, color: Colors.red),
-                        const SizedBox(height: 12),
-                        Text(_error!,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.grey)),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                            onPressed: _load,
-                            child: const Text('Retry')),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 48,
+                      color: Colors.red,
                     ),
-                  ),
-                )
-              : _ReceiptBody(detail: detail!),
+                    const SizedBox(height: 12),
+                    Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _load,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : _ReceiptBody(detail: detail!),
       bottomNavigationBar: detail == null || detail.isVoided
           ? null
           : SafeArea(
               child: Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                 child: Row(
                   children: [
                     Expanded(
@@ -257,11 +285,11 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
                                 width: 16,
                                 height: 16,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.print_outlined),
-                        label:
-                            Text(_printing ? 'Printing…' : 'Print Receipt'),
+                        label: Text(_printing ? 'Printing…' : 'Print Receipt'),
                         style: OutlinedButton.styleFrom(
                           minimumSize: Size.zero,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -326,17 +354,22 @@ class _ReceiptBody extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.red.shade200),
                   ),
-                  child: const Text('VOIDED',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1)),
+                  child: const Text(
+                    'VOIDED',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
+                  ),
                 ),
               if (detail.wasEdited && !detail.isVoided)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      vertical: 6, horizontal: 12),
+                    vertical: 6,
+                    horizontal: 12,
+                  ),
                   margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(
                     color: Colors.orange.shade50,
@@ -347,12 +380,12 @@ class _ReceiptBody extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.edit_note,
-                          size: 14, color: Colors.orange),
+                      Icon(Icons.edit_note, size: 14, color: Colors.orange),
                       SizedBox(width: 6),
-                      Text('Receipt has been edited',
-                          style: TextStyle(
-                              color: Colors.orange, fontSize: 12)),
+                      Text(
+                        'Receipt has been edited',
+                        style: TextStyle(color: Colors.orange, fontSize: 12),
+                      ),
                     ],
                   ),
                 ),
@@ -373,69 +406,76 @@ class _ReceiptBody extends StatelessWidget {
                       _Row('Location', detail.locationLabel),
                       if (detail.orderNumber != null)
                         _Row('Order #', detail.orderNumber!),
-                      _Row('Receipt #', '${detail.id}'),
+                      _Row('Receipt #', detail.receiptNumber),
                       _Row('Date', dateStr),
                       _Row('Method', methodLabel),
                       const Divider(height: 24),
 
                       // Items
                       if (detail.items.isEmpty)
-                        Text('No items',
-                            style: TextStyle(color: Colors.grey.shade500))
+                        Text(
+                          'No items',
+                          style: TextStyle(color: Colors.grey.shade500),
+                        )
                       else ...[
-                        ...detail.items.map((item) => Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 4),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      item.productName,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w500),
+                        ...detail.items.map(
+                          (item) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    item.productName,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
-                                  Text(
-                                    item.weight != null
-                                        ? '${item.weight!.toStringAsFixed(3)} kg'
-                                        : '×${item.quantity}',
-                                    style: TextStyle(
-                                        color: Colors.grey.shade600),
+                                ),
+                                Text(
+                                  item.weight != null
+                                      ? '${item.weight!.toStringAsFixed(3)} kg'
+                                      : '×${item.quantity}',
+                                  style: TextStyle(color: Colors.grey.shade600),
+                                ),
+                                const SizedBox(width: 16),
+                                Text(
+                                  formatRM(item.subtotal),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
                                   ),
-                                  const SizedBox(width: 16),
-                                  Text(formatRM(item.subtotal),
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w500)),
-                                ],
-                              ),
-                            )),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ],
                       const Divider(height: 24),
 
                       // Totals
                       _Row('Subtotal', formatRM(detail.subtotal)),
                       if (detail.serviceCharge > 0)
-                        _Row('Service Charge',
-                            formatRM(detail.serviceCharge)),
-                      if (detail.sst > 0)
-                        _Row('SST', formatRM(detail.sst)),
+                        _Row('Service Charge', formatRM(detail.serviceCharge)),
+                      if (detail.sst > 0) _Row('SST', formatRM(detail.sst)),
                       if (detail.discount > 0)
-                        _Row('Discount',
-                            '− ${formatRM(detail.discount)}',
-                            valueColor: Colors.green),
+                        _Row(
+                          'Discount',
+                          '− ${formatRM(detail.discount)}',
+                          valueColor: Colors.green,
+                        ),
                       const Divider(height: 16),
-                      _Row('TOTAL', formatRM(detail.grandTotal),
-                          bold: true,
-                          fontSize: 20,
-                          valueColor: const Color(0xFF1E6FD9)),
+                      _Row(
+                        'TOTAL',
+                        formatRM(detail.grandTotal),
+                        bold: true,
+                        fontSize: 20,
+                        valueColor: const Color(0xFF1E6FD9),
+                      ),
 
                       // Cash details
                       if (detail.cashReceived != null) ...[
                         const SizedBox(height: 8),
-                        _Row('Cash Received',
-                            formatRM(detail.cashReceived!)),
-                        _Row('Change',
-                            formatRM(detail.changeGiven ?? 0)),
+                        _Row('Cash Received', formatRM(detail.cashReceived!)),
+                        _Row('Change', formatRM(detail.changeGiven ?? 0)),
                       ],
                     ],
                   ),
@@ -456,32 +496,41 @@ class _Row extends StatelessWidget {
   final double fontSize;
   final Color? valueColor;
 
-  const _Row(this.label, this.value,
-      {this.bold = false, this.fontSize = 13, this.valueColor});
+  const _Row(
+    this.label,
+    this.value, {
+    this.bold = false,
+    this.fontSize = 13,
+    this.valueColor,
+  });
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Text(label,
-                  style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight:
-                          bold ? FontWeight.bold : FontWeight.normal,
-                      color: Colors.grey.shade700)),
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+              color: Colors.grey.shade700,
             ),
-            Text(value,
-                style: TextStyle(
-                    fontSize: fontSize,
-                    fontWeight:
-                        bold ? FontWeight.bold : FontWeight.normal,
-                    color: valueColor)),
-          ],
+          ),
         ),
-      );
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: fontSize,
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+            color: valueColor,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 // ── Edit sheet ────────────────────────────────────────────────────────────────
@@ -490,8 +539,11 @@ class _EditResult {
   final List<int> qtys;
   final List<double?> weights;
   final String reason;
-  const _EditResult(
-      {required this.qtys, required this.weights, required this.reason});
+  const _EditResult({
+    required this.qtys,
+    required this.weights,
+    required this.reason,
+  });
 }
 
 class _EditSheet extends StatefulWidget {
@@ -504,6 +556,7 @@ class _EditSheet extends StatefulWidget {
 
 class _EditSheetState extends State<_EditSheet> {
   late List<int> _qtys;
+  late List<bool> _removed;
   late List<TextEditingController?> _weightCtrls;
   final _reasonCtrl = TextEditingController();
 
@@ -511,6 +564,7 @@ class _EditSheetState extends State<_EditSheet> {
   void initState() {
     super.initState();
     _qtys = widget.items.map((i) => i.quantity).toList();
+    _removed = List<bool>.filled(widget.items.length, false);
     _weightCtrls = widget.items.map((i) {
       if (i.weight == null) return null;
       final text = i.weight!
@@ -531,10 +585,8 @@ class _EditSheetState extends State<_EditSheet> {
   }
 
   void _save() {
-    if (_reasonCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a reason')),
-      );
+    if (_removed.every((removed) => removed)) {
+      setState(() {});
       return;
     }
     final weights = _weightCtrls
@@ -543,7 +595,10 @@ class _EditSheetState extends State<_EditSheet> {
     Navigator.pop(
       context,
       _EditResult(
-        qtys: List.of(_qtys),
+        qtys: List.generate(
+          _qtys.length,
+          (index) => _removed[index] ? 0 : _qtys[index],
+        ),
         weights: weights,
         reason: _reasonCtrl.text.trim(),
       ),
@@ -553,8 +608,9 @@ class _EditSheetState extends State<_EditSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Column(
@@ -572,12 +628,13 @@ class _EditSheetState extends State<_EditSheet> {
                 ),
               ),
             ),
-            const Text('Edit Receipt Items',
-                style:
-                    TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            const Text(
+              'Edit Receipt Items',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 4),
             Text(
-              'Adjust quantities. Totals are recalculated automatically.',
+              'Adjust quantities or remove items. Totals are recalculated automatically.',
               style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
             ),
             const SizedBox(height: 16),
@@ -585,6 +642,7 @@ class _EditSheetState extends State<_EditSheet> {
               final idx = e.key;
               final item = e.value;
               final isWeight = item.weight != null;
+              final removed = _removed[idx];
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
@@ -593,36 +651,52 @@ class _EditSheetState extends State<_EditSheet> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(item.productName,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w500)),
+                          Text(
+                            item.productName,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              color: removed ? Colors.grey : null,
+                              decoration: removed
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                            ),
+                          ),
                           Text(
                             isWeight
                                 ? '${formatRM(item.unitPrice)} / kg'
                                 : '${formatRM(item.unitPrice)} each',
                             style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.grey.shade600),
+                              fontSize: 11,
+                              color: Colors.grey.shade600,
+                            ),
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(width: 12),
-                    if (isWeight)
+                    if (removed)
+                      TextButton.icon(
+                        onPressed: () => setState(() => _removed[idx] = false),
+                        icon: const Icon(Icons.undo, size: 18),
+                        label: const Text('Undo'),
+                      )
+                    else if (isWeight)
                       SizedBox(
                         width: 90,
                         child: TextField(
                           controller: _weightCtrls[idx],
-                          keyboardType:
-                              const TextInputType.numberWithOptions(
-                                  decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           textAlign: TextAlign.center,
                           decoration: const InputDecoration(
                             suffixText: 'kg',
                             isDense: true,
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 10),
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
                           ),
                         ),
                       )
@@ -631,8 +705,7 @@ class _EditSheetState extends State<_EditSheet> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            icon: const Icon(
-                                Icons.remove_circle_outline),
+                            icon: const Icon(Icons.remove_circle_outline),
                             color: const Color(0xFF1E6FD9),
                             iconSize: 22,
                             visualDensity: VisualDensity.compact,
@@ -646,46 +719,60 @@ class _EditSheetState extends State<_EditSheet> {
                               '${_qtys[idx]}',
                               textAlign: TextAlign.center,
                               style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
                           IconButton(
-                            icon:
-                                const Icon(Icons.add_circle_outline),
+                            icon: const Icon(Icons.add_circle_outline),
                             color: const Color(0xFF1E6FD9),
                             iconSize: 22,
                             visualDensity: VisualDensity.compact,
-                            onPressed: () =>
-                                setState(() => _qtys[idx]++),
+                            onPressed: () => setState(() => _qtys[idx]++),
                           ),
                         ],
                       ),
+                    if (!removed) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Remove item',
+                        icon: const Icon(Icons.delete_outline),
+                        color: Colors.red,
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => setState(() => _removed[idx] = true),
+                      ),
+                    ],
                   ],
                 ),
               );
             }),
             const Divider(height: 24),
+            if (_removed.every((removed) => removed)) ...[
+              const Text(
+                'A receipt must keep at least one item.',
+                style: TextStyle(color: Colors.red, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+            ],
             TextField(
               controller: _reasonCtrl,
               decoration: const InputDecoration(
-                labelText: 'Reason for edit *',
-                hintText:
-                    'e.g. Customer ordered 1 teh, cashier entered 2',
+                labelText: 'Reason for edit (optional)',
+                hintText: 'e.g. Customer ordered 1 teh, cashier entered 2',
                 border: OutlineInputBorder(),
               ),
               maxLines: 2,
             ),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: _save,
+              onPressed: _removed.every((removed) => removed) ? null : _save,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF1E6FD9),
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-              child: const Text('Save Changes',
-                  style: TextStyle(fontSize: 16)),
+              child: const Text('Save Changes', style: TextStyle(fontSize: 16)),
             ),
           ],
         ),

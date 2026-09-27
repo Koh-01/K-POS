@@ -1,12 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from PIL import Image
 from sqlalchemy.orm import Session
 
 from database import get_db
 from dependencies import require_admin
 import models
 import schemas
+from image_utils import load_upload_image
 
 router = APIRouter(prefix="/salary", tags=["Salary"])
+
+UPLOAD_DIR = Path(__file__).parent / "static" / "images"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -199,3 +207,43 @@ def delete_salary_payment(
             db.delete(cash)
     db.delete(payment)
     db.commit()
+
+
+@router.post("/payments/{payment_id}/signature", response_model=schemas.SalaryPaymentResponse)
+async def upload_salary_signature(
+    payment_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    payment = db.query(models.SalaryPayment).filter(
+        models.SalaryPayment.id == payment_id
+    ).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WebP images are accepted")
+
+    old_file = (
+        UPLOAD_DIR / Path(payment.signature_image_path).name
+        if payment.signature_image_path
+        else None
+    )
+
+    try:
+        img = load_upload_image(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    filename = f"salary_sig_{uuid.uuid4().hex[:8]}.jpg"
+    dest = UPLOAD_DIR / filename
+    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+    img.save(dest, format="JPEG", quality=90, optimize=True)
+
+    payment.signature_image_path = f"static/images/{filename}"
+    db.commit()
+    if old_file:
+        old_file.unlink(missing_ok=True)
+    db.refresh(payment)
+    return payment

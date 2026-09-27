@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from decimal import Decimal
 from datetime import datetime
 
@@ -7,6 +7,20 @@ class UserCreate(BaseModel):
     password: str
     role: str  # "admin" 或 "cashier"
     full_name: str | None = None
+
+    @field_validator("role")
+    @classmethod
+    def _valid_role(cls, value: str) -> str:
+        if value not in ("admin", "cashier"):
+            raise ValueError("role must be 'admin' or 'cashier'")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def _valid_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("password must be at least 8 characters")
+        return value
 
 class UserPermissionsUpdate(BaseModel):
     can_view_cash: bool = True
@@ -22,22 +36,72 @@ class UserPermissionsUpdate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
+    email: str | None = None
+    email_verified: bool = False
+    restaurant_id: int
     role: str
     full_name: str | None = None
     is_active: bool
-    permissions: dict = {}
+    permissions: dict = Field(default_factory=dict)
 
     @field_validator("permissions", mode="before")
     @classmethod
     def _norm_permissions(cls, v):
         return v if isinstance(v, dict) else {}
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class AdminRegistrationRequest(BaseModel):
+    restaurant_name: str = Field(min_length=2, max_length=150)
+    full_name: str = Field(min_length=2, max_length=100)
+    email: str = Field(min_length=3, max_length=254)
+    password: str
+
+    @field_validator("restaurant_name", "full_name")
+    @classmethod
+    def _strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("value is too short")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def _registration_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("password must be at least 8 characters")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def _registration_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        local, separator, domain = value.rpartition("@")
+        if not separator or not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("enter a valid email address")
+        return value
+
+
+class ResendVerificationRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def _resend_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        local, separator, domain = value.rpartition("@")
+        if not separator or not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("enter a valid email address")
+        return value
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
 
 class UserProfileUpdate(BaseModel):
     full_name: str | None = None
@@ -69,8 +133,7 @@ class CategoryResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Product ───────────────────────────────────────────────
@@ -83,6 +146,13 @@ class ProductCreate(BaseModel):
     sort_order: int = 0
     sold_by_weight: bool = False
 
+    @field_validator("price")
+    @classmethod
+    def _positive_price(cls, value: Decimal) -> Decimal:
+        if value < 0:
+            raise ValueError("price must be non-negative")
+        return value
+
 class ProductUpdate(BaseModel):
     category_id: int | None = None
     name: str | None = None
@@ -91,6 +161,13 @@ class ProductUpdate(BaseModel):
     status: str | None = None  # "active" 或 "inactive"
     sort_order: int | None = None
     sold_by_weight: bool | None = None
+
+    @field_validator("price")
+    @classmethod
+    def _positive_price(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value < 0:
+            raise ValueError("price must be non-negative")
+        return value
 
 class ProductResponse(BaseModel):
     id: int
@@ -106,8 +183,7 @@ class ProductResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Table ─────────────────────────────────────────────────
@@ -132,8 +208,7 @@ class TableResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── OrderItem ─────────────────────────────────────────────
@@ -143,10 +218,38 @@ class OrderItemCreate(BaseModel):
     weight_kg: float | None = None
     notes: str | None = None
 
+    @field_validator("quantity")
+    @classmethod
+    def _positive_quantity(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("quantity must be greater than zero")
+        return value
+
+    @field_validator("weight_kg")
+    @classmethod
+    def _positive_weight(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("weight_kg must be greater than zero")
+        return value
+
 class OrderItemUpdate(BaseModel):
     quantity: int | None = None
     weight_kg: float | None = None
     notes: str | None = None
+
+    @field_validator("quantity")
+    @classmethod
+    def _positive_quantity(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("quantity must be greater than zero")
+        return value
+
+    @field_validator("weight_kg")
+    @classmethod
+    def _positive_weight(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("weight_kg must be greater than zero")
+        return value
 
 class OrderItemResponse(BaseModel):
     id: int
@@ -161,22 +264,43 @@ class OrderItemResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Order ─────────────────────────────────────────────────
 class OrderCreate(BaseModel):
+    offline_ref: str | None = Field(default=None, max_length=100)
     table_id: int | None = None          # takeaway 或 custom table 时不传
     table_name: str | None = None        # custom table label (not saved to tables list)
     order_type: str = "dine_in"          # "dine_in" | "take_away"
     notes: str | None = None
-    items: list[OrderItemCreate] = []
+    items: list[OrderItemCreate] = Field(default_factory=list)
+
+    @field_validator("order_type")
+    @classmethod
+    def _valid_order_type(cls, value: str) -> str:
+        # Accept legacy clients once, but persist the canonical API value.
+        if value == "takeaway":
+            value = "take_away"
+        if value not in ("dine_in", "take_away"):
+            raise ValueError("order_type must be 'dine_in' or 'take_away'")
+        return value
 
 class OrderUpdate(BaseModel):
+    table_id: int | None = None
+    table_name: str | None = None
     notes: str | None = None
     order_type: str | None = None
     items: list[OrderItemCreate] | None = None
+
+    @field_validator("order_type")
+    @classmethod
+    def _valid_order_type(cls, value: str | None) -> str | None:
+        if value == "takeaway":
+            value = "take_away"
+        if value is not None and value not in ("dine_in", "take_away"):
+            raise ValueError("order_type must be 'dine_in' or 'take_away'")
+        return value
 
 class OrderResponse(BaseModel):
     id: int
@@ -190,10 +314,9 @@ class OrderResponse(BaseModel):
     is_deleted: bool
     created_at: datetime
     updated_at: datetime
-    items: list[OrderItemResponse] = []
+    items: list[OrderItemResponse] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── StoreSettings ─────────────────────────────────────────
@@ -207,6 +330,7 @@ class SettingsResponse(BaseModel):
 # ── Payment ───────────────────────────────────────────────
 class PaymentCreate(BaseModel):
     order_id: int
+    offline_ref: str | None = Field(default=None, max_length=100)
     payment_method: str                         # "cash" | "duitnow"
     promotion_id: int | None = None             # promotion to apply (overrides manual discount)
     promo_code: str | None = None               # alternative: enter code directly
@@ -214,6 +338,27 @@ class PaymentCreate(BaseModel):
     discount_amount: Decimal = Decimal("0")     # ignored if promotion_id/promo_code given
     cash_tendered: Decimal | None = None
     notes: str | None = None
+
+    @field_validator("payment_method")
+    @classmethod
+    def _valid_method(cls, value: str) -> str:
+        if value not in ("cash", "duitnow", "card"):
+            raise ValueError("unsupported payment method")
+        return value
+
+    @field_validator("discount_percent")
+    @classmethod
+    def _valid_discount_percent(cls, value: Decimal) -> Decimal:
+        if value < 0 or value > 100:
+            raise ValueError("discount_percent must be between 0 and 100")
+        return value
+
+    @field_validator("discount_amount", "cash_tendered")
+    @classmethod
+    def _non_negative_amount(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and value < 0:
+            raise ValueError("amount cannot be negative")
+        return value
 
 class PaymentPreview(BaseModel):
     """结账前预览金额，不写入数据库"""
@@ -227,12 +372,12 @@ class PaymentPreview(BaseModel):
     sst_amount: Decimal
     grand_total: Decimal
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PaymentResponse(BaseModel):
     id: int
     order_id: int
+    offline_ref: str | None = None
     promotion_id: int | None
     payment_method: str
     status: str
@@ -252,15 +397,14 @@ class PaymentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaymentDetailResponse(PaymentResponse):
     order_number: str | None = None
     table_name: str | None = None
     order_type: str | None = None
-    items: list[OrderItemResponse] = []
+    items: list[OrderItemResponse] = Field(default_factory=list)
 
 
 # ── Audit ──────────────────────────────────────────────────
@@ -271,7 +415,9 @@ class PaymentEditRequest(BaseModel):
     items: list[OrderItemCreate]           # 完整替换订单商品列表
     discount_percent: Decimal = Decimal("0")
     discount_amount: Decimal = Decimal("0")
-    reason: str                            # 必填，写入审计日志
+    # Optional for the cashier. Audit rows keep an empty string when omitted
+    # because the existing database column is intentionally non-null.
+    reason: str = ""
 
 class AuditLogResponse(BaseModel):
     id: int
@@ -282,8 +428,7 @@ class AuditLogResponse(BaseModel):
     changed_by: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── CashRecord ─────────────────────────────────────────────
@@ -299,9 +444,11 @@ class CashRecordCreate(BaseModel):
     description: str = ""
     category: str | None = None
     reference: str | None = None
+    offline_ref: str | None = Field(default=None, max_length=100)
 
 class CashRecordResponse(BaseModel):
     id: int
+    offline_ref: str | None = None
     type: str
     amount: Decimal
     description: str
@@ -311,8 +458,7 @@ class CashRecordResponse(BaseModel):
     created_by: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Reports ────────────────────────────────────────────────
@@ -350,8 +496,8 @@ class AnnualReportResponse(BaseModel):
 class ProductSalesItem(BaseModel):
     product_id: int
     product_name: str
-    category_name: str
-    total_qty: int
+    category_name: str | None
+    total_qty: Decimal
     total_revenue: Decimal
 
 class TopProductsResponse(BaseModel):
@@ -370,6 +516,8 @@ class AllSettingsUpdate(BaseModel):
     store_address: str | None = None
     store_phone: str | None = None
     store_email: str | None = None
+    store_ssm_number: str | None = None
+    tax_registration_number: str | None = None
     store_logo_path: str | None = None
     theme: str | None = None               # "light" | "dark"
     receipt_header: str | None = None
@@ -381,6 +529,26 @@ class AllSettingsUpdate(BaseModel):
     receipt_show_logo: bool | None = None
     duitnow_qr_image_url: str | None = None
     payment_to_cash_record: bool | None = None
+    require_salary_signature: bool | None = None
+
+    @field_validator("sst_rate", "service_charge_rate")
+    @classmethod
+    def _valid_rate(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and not Decimal("0") <= value <= Decimal("1"):
+            raise ValueError("rate must be between 0 and 1")
+        return value
+
+    @field_validator(
+        "receipt_header_size",
+        "receipt_header_align",
+        "receipt_footer_size",
+        "receipt_footer_align",
+    )
+    @classmethod
+    def _valid_receipt_option(cls, value: int | None) -> int | None:
+        if value is not None and value not in (0, 1, 2):
+            raise ValueError("receipt option must be 0, 1, or 2")
+        return value
 
 class AllSettingsResponse(BaseModel):
     sst_enabled: bool
@@ -388,10 +556,13 @@ class AllSettingsResponse(BaseModel):
     service_charge_enabled: bool
     service_charge_rate: Decimal
     payment_to_cash_record: bool
+    require_salary_signature: bool
     store_name: str
     store_address: str
     store_phone: str
     store_email: str
+    store_ssm_number: str
+    tax_registration_number: str
     store_logo_path: str
     theme: str
     receipt_header: str
@@ -414,24 +585,70 @@ class LoginLogResponse(BaseModel):
     user_agent: str | None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Offline Sync ───────────────────────────────────────────
+class SyncOrderItemCreate(OrderItemCreate):
+    # Trusted snapshot captured from the last server catalog while offline.
+    unit_price: Decimal
+
+    @field_validator("unit_price")
+    @classmethod
+    def _valid_unit_price(cls, value: Decimal) -> Decimal:
+        if value < 0:
+            raise ValueError("unit_price must be non-negative")
+        return value
+
+
 class SyncOrderCreate(BaseModel):
-    offline_ref: str
+    offline_ref: str = Field(min_length=1, max_length=100)
     table_id: int | None = None
+    table_name: str | None = None
     order_type: str = "dine_in"
     notes: str | None = None
-    items: list[OrderItemCreate]
+    paid_locally: bool = False
+    items: list[SyncOrderItemCreate]
     device_created_at: datetime | None = None   # actual creation time on device
+
+    @field_validator("order_type")
+    @classmethod
+    def _valid_order_type(cls, value: str) -> str:
+        if value == "takeaway":
+            value = "take_away"
+        if value not in ("dine_in", "take_away"):
+            raise ValueError("order_type must be 'dine_in' or 'take_away'")
+        return value
 
 class SyncOrderResult(BaseModel):
     offline_ref: str
     order_id: int | None
     order_number: str | None
     action: str       # "created" | "skipped" | "error"
+    error: str | None = None
+
+
+class SyncPaymentCreate(BaseModel):
+    offline_ref: str = Field(min_length=1, max_length=100)
+    order_id: int
+    payment_method: str
+    promotion_id: int | None = None
+    subtotal: Decimal
+    discount_percent: Decimal = Decimal("0")
+    discount_amount: Decimal = Decimal("0")
+    service_charge_rate: Decimal = Decimal("0")
+    service_charge_amount: Decimal = Decimal("0")
+    sst_rate: Decimal = Decimal("0")
+    sst_amount: Decimal = Decimal("0")
+    grand_total: Decimal
+    cash_tendered: Decimal | None = None
+    device_created_at: datetime | None = None
+
+
+class SyncPaymentResult(BaseModel):
+    offline_ref: str
+    payment_id: int | None = None
+    action: str
     error: str | None = None
 
 
@@ -475,8 +692,7 @@ class PromotionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PromotionApplyRequest(BaseModel):
     order_id: int
@@ -513,8 +729,7 @@ class WorkerResponse(BaseModel):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── SalaryPayment ──────────────────────────────────────────
@@ -538,7 +753,7 @@ class SalaryPaymentResponse(BaseModel):
     amount: Decimal
     note: str | None = None
     cash_record_id: int | None = None
+    signature_image_path: str | None = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

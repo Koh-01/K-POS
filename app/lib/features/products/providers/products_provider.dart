@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
+import '../../../core/api/api_exception.dart';
 import '../../../core/db/local_db.dart';
 import '../../../core/models/category.dart';
 import '../../../core/models/product.dart';
@@ -10,8 +12,9 @@ class ProductCatalog {
   const ProductCatalog({required this.products, required this.categories});
 }
 
-final productsProvider =
-    FutureProvider.autoDispose<ProductCatalog>((ref) async {
+final productsProvider = FutureProvider.autoDispose<ProductCatalog>((
+  ref,
+) async {
   try {
     final results = await Future.wait([
       ApiClient.instance.get('/products'),
@@ -25,34 +28,46 @@ final productsProvider =
         .map((e) => Category.fromJson(e as Map<String, dynamic>))
         .toList();
 
-    // Update local cache
-    await LocalDb.upsertProducts(products.map((p) => p.toLocalDb()).toList());
-    await LocalDb.upsertCategories(
-        categories.map((c) => c.toJson()).toList());
+    // sqflite is the mobile/desktop offline store. Flutter Web has no
+    // registered sqflite implementation, so a successful API response must
+    // not be turned into a catalogue failure by trying to write that cache.
+    if (!kIsWeb) {
+      await LocalDb.upsertProducts(products.map((p) => p.toLocalDb()).toList());
+      await LocalDb.upsertCategories(
+        categories.map((c) => c.toJson()).toList(),
+      );
+    }
 
     return ProductCatalog(products: products, categories: categories);
-  } catch (_) {
+  } catch (e) {
+    if (!ApiException.isOfflineFailure(e)) rethrow;
+    if (kIsWeb) rethrow;
     // Offline fallback
     final rows = await LocalDb.getProducts();
     final catRows = await LocalDb.getCategories();
     return ProductCatalog(
       products: rows
-          .map((r) => Product(
-                id: r['id'] as int,
-                name: r['name'] as String,
-                categoryId: r['category_id'] as int?,
-                price: r['price'] as double,
-                imageUrl: r['image_url'] as String?,
-                isAvailable: (r['is_available'] as int) == 1,
-                sortOrder: (r['sort_order'] as int?) ?? 0,
-              ))
+          .map(
+            (r) => Product(
+              id: r['id'] as int,
+              name: r['name'] as String,
+              categoryId: r['category_id'] as int?,
+              price: r['price'] as double,
+              imageUrl: r['image_url'] as String?,
+              isAvailable: (r['is_available'] as int) == 1,
+              soldByWeight: ((r['sold_by_weight'] as int?) ?? 0) == 1,
+              sortOrder: (r['sort_order'] as int?) ?? 0,
+            ),
+          )
           .toList(),
       categories: catRows
-          .map((r) => Category(
-                id: r['id'] as int,
-                name: r['name'] as String,
-                sortOrder: (r['sort_order'] as int?) ?? 0,
-              ))
+          .map(
+            (r) => Category(
+              id: r['id'] as int,
+              name: r['name'] as String,
+              sortOrder: (r['sort_order'] as int?) ?? 0,
+            ),
+          )
           .toList(),
     );
   }
@@ -74,9 +89,11 @@ class ProductsNotifier extends StateNotifier<AsyncValue<List<Product>>> {
   Future<void> _fetch() async {
     try {
       final res = await ApiClient.instance.get('/products');
-      state = AsyncValue.data((res.data as List)
-          .map((e) => Product.fromJson(e as Map<String, dynamic>))
-          .toList());
+      state = AsyncValue.data(
+        (res.data as List)
+            .map((e) => Product.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -88,9 +105,28 @@ class ProductsNotifier extends StateNotifier<AsyncValue<List<Product>>> {
   }
 
   Future<void> toggleAvailability(int id, bool available) async {
-    await ApiClient.instance.put('/products/$id',
-        data: {'status': available ? 'active' : 'inactive'});
+    await ApiClient.instance.put(
+      '/products/$id',
+      data: {'status': available ? 'active' : 'inactive'},
+    );
     await load();
+  }
+
+  Future<void> updateCategory(Iterable<int> ids, int categoryId) async {
+    for (final id in ids) {
+      await ApiClient.instance.put(
+        '/products/$id',
+        data: {'category_id': categoryId},
+      );
+    }
+    await _fetch();
+  }
+
+  Future<void> deleteMany(Iterable<int> ids) async {
+    for (final id in ids) {
+      await ApiClient.instance.delete('/products/$id');
+    }
+    await _fetch();
   }
 
   /// Persists a new relative order for [reordered]. This may be the full
@@ -109,12 +145,14 @@ class ProductsNotifier extends StateNotifier<AsyncValue<List<Product>>> {
 }
 
 final productsListProvider =
-    StateNotifierProvider.autoDispose<ProductsNotifier, AsyncValue<List<Product>>>(
-  (_) => ProductsNotifier(),
-);
+    StateNotifierProvider.autoDispose<
+      ProductsNotifier,
+      AsyncValue<List<Product>>
+    >((_) => ProductsNotifier());
 
-final categoriesProvider =
-    FutureProvider.autoDispose<List<Category>>((ref) async {
+final categoriesProvider = FutureProvider.autoDispose<List<Category>>((
+  ref,
+) async {
   final res = await ApiClient.instance.get('/categories');
   return (res.data as List)
       .map((e) => Category.fromJson(e as Map<String, dynamic>))

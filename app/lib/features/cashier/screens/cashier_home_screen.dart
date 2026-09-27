@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/cashier_provider.dart';
 import '../../../features/auth/providers/auth_provider.dart';
+import '../../../features/products/providers/products_provider.dart';
+import '../../../features/settings/providers/settings_provider.dart';
+import '../../../core/db/local_db.dart';
 import '../../../core/models/order.dart';
 import '../../../features/cash/screens/cash_records_screen.dart';
 import '../../../shared/utils/error_utils.dart';
@@ -12,6 +15,52 @@ import '../../../shared/widgets/kts_logo.dart';
 class CashierHomeScreen extends ConsumerWidget {
   const CashierHomeScreen({super.key});
 
+  Future<void> _showSyncStatus(BuildContext context) async {
+    final issues = await LocalDb.getPendingSyncIssues();
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Offline sync status'),
+        content: SizedBox(
+          width: 440,
+          child: issues.isEmpty
+              ? const Text(
+                  'Items are waiting for a network connection and will retry automatically.',
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: issues.length,
+                  separatorBuilder: (_, _) => const Divider(),
+                  itemBuilder: (_, index) {
+                    final issue = issues[index];
+                    final reference = issue['reference']?.toString() ?? '';
+                    final shortRef = reference.length > 12
+                        ? reference.substring(0, 12)
+                        : reference;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(
+                        Icons.error_outline,
+                        color: Colors.orange,
+                      ),
+                      title: Text('${issue['kind']} · $shortRef'),
+                      subtitle: Text(issue['last_error']?.toString() ?? ''),
+                      trailing: Text('${issue['retry_count']}×'),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authProvider).user;
@@ -19,6 +68,14 @@ class CashierHomeScreen extends ConsumerWidget {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final ordersAsync = ref.watch(openOrdersProvider);
+    // Warm every cache required by the basic sale flow as soon as the cashier
+    // reaches home. This closes the window where login succeeds, connectivity
+    // drops before the first order screen is opened, and the device otherwise
+    // has no catalogue/table/tax snapshot for offline checkout.
+    ref.watch(productsProvider);
+    ref.watch(tablesProvider);
+    ref.watch(settingsProvider);
+    final pendingSyncCount = ref.watch(pendingSyncCountProvider).value ?? 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -31,7 +88,7 @@ class CashierHomeScreen extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'KTS POS',
+                  'K POS',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 15,
@@ -60,6 +117,18 @@ class CashierHomeScreen extends ConsumerWidget {
               )
             : null,
         actions: [
+          if (pendingSyncCount > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: ActionChip(
+                avatar: const Icon(Icons.cloud_upload_outlined, size: 16),
+                label: Text('$pendingSyncCount pending'),
+                tooltip: 'View offline sync status',
+                onPressed: () => _showSyncStatus(context),
+                backgroundColor: Colors.orange.shade100,
+                side: BorderSide(color: Colors.orange.shade300),
+              ),
+            ),
           if (user.canViewCash)
             IconButton(
               icon: const Icon(Icons.account_balance_wallet_outlined),
@@ -77,7 +146,7 @@ class CashierHomeScreen extends ConsumerWidget {
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'products') context.push('/products');
-              if (v == 'categories') context.push('/admin/categories');
+              if (v == 'categories') context.push('/categories');
               if (v == 'promotions') context.push('/promotions');
               if (v == 'payments') context.push('/payments');
               if (v == 'settings') context.push('/settings');
@@ -88,55 +157,70 @@ class CashierHomeScreen extends ConsumerWidget {
               if (user.canManageCatalog)
                 const PopupMenuItem(
                   value: 'products',
-                  child: Row(children: [
-                    Icon(Icons.inventory_2_outlined, size: 18),
-                    SizedBox(width: 10),
-                    Text('Products'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(Icons.inventory_2_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Products'),
+                    ],
+                  ),
                 ),
               if (user.canManageCatalog)
                 const PopupMenuItem(
                   value: 'categories',
-                  child: Row(children: [
-                    Icon(Icons.category_outlined, size: 18),
-                    SizedBox(width: 10),
-                    Text('Categories'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(Icons.category_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Categories'),
+                    ],
+                  ),
                 ),
               if (user.canManagePromotion)
                 const PopupMenuItem(
                   value: 'promotions',
-                  child: Row(children: [
-                    Icon(Icons.local_offer_outlined, size: 18),
-                    SizedBox(width: 10),
-                    Text('Promotions'),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(Icons.local_offer_outlined, size: 18),
+                      SizedBox(width: 10),
+                      Text('Promotions'),
+                    ],
+                  ),
                 ),
               const PopupMenuItem(
                 value: 'payments',
-                child: Row(children: [
-                  Icon(Icons.payments_outlined, size: 18),
-                  SizedBox(width: 10),
-                  Text('Payment History'),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(Icons.payments_outlined, size: 18),
+                    SizedBox(width: 10),
+                    Text('Payment History'),
+                  ],
+                ),
               ),
               const PopupMenuItem(
                 value: 'settings',
-                child: Row(children: [
-                  Icon(Icons.settings_outlined, size: 18),
-                  SizedBox(width: 10),
-                  Text('Settings'),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(Icons.settings_outlined, size: 18),
+                    SizedBox(width: 10),
+                    Text('Settings'),
+                  ],
+                ),
               ),
               const PopupMenuDivider(),
               const PopupMenuItem(
                 value: 'logout',
-                child: Row(children: [
-                  Icon(Icons.logout_rounded, size: 18, color: AppTheme.danger),
-                  SizedBox(width: 10),
-                  Text('Logout',
-                      style: TextStyle(color: AppTheme.danger)),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.logout_rounded,
+                      size: 18,
+                      color: AppTheme.danger,
+                    ),
+                    SizedBox(width: 10),
+                    Text('Logout', style: TextStyle(color: AppTheme.danger)),
+                  ],
+                ),
               ),
             ],
           ),
@@ -177,8 +261,11 @@ class _OrderGrid extends StatelessWidget {
                 color: AppTheme.creamDeep,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.receipt_long_outlined,
-                  size: 36, color: AppTheme.textHint),
+              child: const Icon(
+                Icons.receipt_long_outlined,
+                size: 36,
+                color: AppTheme.textHint,
+              ),
             ),
             const SizedBox(height: 18),
             const Text(
@@ -192,10 +279,7 @@ class _OrderGrid extends StatelessWidget {
             const SizedBox(height: 6),
             const Text(
               'Tap + New Order to get started',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppTheme.textHint,
-              ),
+              style: TextStyle(fontSize: 13, color: AppTheme.textHint),
             ),
           ],
         ),
@@ -205,12 +289,16 @@ class _OrderGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final w = constraints.maxWidth;
-        final crossCount = w >= 900 ? 4 : w >= 600 ? 3 : 2;
+        final crossCount = w >= 900
+            ? 4
+            : w >= 600
+            ? 3
+            : 2;
         final aspect = w >= 900
             ? 1.4
             : w >= 600
-                ? 1.35
-                : 1.25;
+            ? 1.35
+            : 1.25;
 
         return GridView.builder(
           padding: EdgeInsets.all(w >= 600 ? 20 : 14),
@@ -238,7 +326,7 @@ class _OrderCard extends ConsumerWidget {
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel Order?'),
         content: Text(
-          'Cancel order for ${order.orderType == 'takeaway' ? 'Takeaway' : (order.tableName ?? 'Table ${order.tableId}')}? This cannot be undone.',
+          'Cancel order for ${order.orderType == OrderTypes.takeAway ? 'Takeaway' : (order.tableName ?? 'Table ${order.tableId}')}? This cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -253,35 +341,43 @@ class _OrderCard extends ConsumerWidget {
         ],
       ),
     );
-    if (confirmed != true || order.id == null) return;
+    if (confirmed != true) return;
     try {
-      await OrderService.deleteOrder(order.id!);
+      if (order.id != null) {
+        await OrderService.deleteOrder(order.id!);
+      } else if (order.offlineRef != null) {
+        await LocalDb.deletePendingOrder(order.offlineRef!);
+      }
       ref.invalidate(openOrdersProvider);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isTakeaway = order.orderType == 'takeaway';
+    final isTakeaway = order.orderType == OrderTypes.takeAway;
     final label = isTakeaway
         ? 'Takeaway'
         : (order.tableName ?? 'Table ${order.tableId}');
     final itemCount = order.items.length;
-    final accentColor = isTakeaway
-        ? const Color(0xFFE07A3A)
-        : AppTheme.info;
+    final accentColor = isTakeaway ? const Color(0xFFE07A3A) : AppTheme.info;
 
     final isOffline = order.id == null;
 
     return GestureDetector(
-      onTap: isOffline ? null : () => context.push('/cashier/order/${order.id}'),
-      onLongPress:
-          order.id != null ? () => _confirmCancel(context, ref) : null,
+      onTap: () {
+        if (order.id != null) {
+          context.push('/cashier/order/${order.id}');
+        } else if (order.offlineRef != null) {
+          context.push('/cashier/order-offline/${order.offlineRef}');
+        }
+      },
+      onLongPress: () => _confirmCancel(context, ref),
       child: Opacity(
         opacity: isOffline ? 0.75 : 1.0,
         child: Container(
@@ -341,25 +437,26 @@ class _OrderCard extends ConsumerWidget {
                                 maxLines: 2,
                               ),
                             ),
-                            if (!isOffline)
-                              GestureDetector(
-                                onTap: () => _confirmCancel(context, ref),
-                                child: const Padding(
-                                  padding: EdgeInsets.all(4),
-                                  child: Icon(
-                                    Icons.close_rounded,
-                                    size: 16,
-                                    color: AppTheme.textHint,
-                                  ),
+                            GestureDetector(
+                              onTap: () => _confirmCancel(context, ref),
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 16,
+                                  color: AppTheme.textHint,
                                 ),
                               ),
+                            ),
                           ],
                         ),
                         const Spacer(),
                         if (isOffline)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             margin: const EdgeInsets.only(bottom: 4),
                             decoration: BoxDecoration(
                               color: AppTheme.warning.withValues(alpha: 0.1),

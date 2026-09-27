@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Settings — POS Admin{% endblock %}
+{% block title %}Settings — K POS{% endblock %}
 
 {% block content %}
 <h4 class="fw-bold mb-4">Settings</h4>
@@ -10,6 +10,80 @@
   <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
 </div>
 {% endif %}
+
+{% set drive_alerts = {
+  'connected': ('success', 'check-circle', 'Google Drive connected. Backups and monthly reports will be saved to your Drive.'),
+  'disconnected': ('secondary', 'x-circle', 'Google Drive disconnected. Automatic backups and monthly reports are paused.'),
+  'cancelled': ('warning', 'exclamation-triangle', 'Google Drive connection was cancelled.'),
+  'invalid_state': ('danger', 'exclamation-octagon', 'The connection link expired or was invalid. Please try again.'),
+  'failed': ('danger', 'exclamation-octagon', 'Could not connect to Google Drive. Please try again.'),
+  'not_configured': ('warning', 'exclamation-triangle', 'Google Drive is not available on this server yet. Please contact K POS support.'),
+} %}
+{% if drive_msg in drive_alerts %}
+{% set a = drive_alerts[drive_msg] %}
+<div class="alert alert-{{ a[0] }} alert-dismissible fade show py-2" role="alert">
+  <i class="bi bi-{{ a[1] }} me-1"></i>{{ a[2] }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<!-- Google Drive (outside the settings form: it has its own actions) -->
+<div class="card border-0 shadow-sm mb-4" id="google-drive">
+  <div class="card-header bg-transparent fw-semibold">
+    <i class="bi bi-google me-2"></i>Google Drive Backup &amp; Monthly Reports
+  </div>
+  <div class="card-body">
+    {% if drive.connected %}
+    <p class="mb-2">
+      <span class="badge text-bg-success me-1"><i class="bi bi-check-lg"></i> Connected</span>
+      <strong>{{ drive.google_email or 'Google account' }}</strong>
+    </p>
+    <p class="text-muted small mb-2">
+      A backup is saved every day at 12:00, and last month's sales report on the 1st of each month,
+      to the <strong>K POS – {{ user.restaurant.name }}</strong> folder in this Drive.
+      K POS can only see the files it creates there.
+    </p>
+    {% if drive.last_upload_at %}
+    <p class="small mb-2">Last upload: {{ drive.last_upload_at[:16].replace('T', ' ') }}</p>
+    {% endif %}
+    {% if drive.last_error %}
+    <div class="alert alert-danger py-2 small mb-2">
+      <i class="bi bi-exclamation-octagon me-1"></i>Last upload failed: {{ drive.last_error }}
+    </div>
+    {% endif %}
+    <div class="d-flex flex-wrap gap-2">
+      {% if drive.folder_url %}
+      <a href="{{ drive.folder_url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-folder2-open me-1"></i>Open Folder
+      </a>
+      {% endif %}
+      <a href="/web/settings/google-drive/connect" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-repeat me-1"></i>Change Account
+      </a>
+      <form method="post" action="/web/settings/google-drive/disconnect"
+            onsubmit="return confirm('Disconnect Google Drive? Automatic backups and monthly reports will stop. Files already in your Drive are kept.');">
+        <button type="submit" class="btn btn-sm btn-outline-danger">
+          <i class="bi bi-x-circle me-1"></i>Disconnect
+        </button>
+      </form>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-3">
+      Connect your own Google account to keep a daily backup and a monthly sales report of this
+      restaurant in your Google Drive. K POS only gets access to the files it creates.
+    </p>
+    {% if drive.configured %}
+    <a href="/web/settings/google-drive/connect" class="btn btn-primary btn-sm">
+      <i class="bi bi-google me-1"></i>Connect Google Drive
+    </a>
+    {% else %}
+    <p class="small text-warning mb-0">
+      <i class="bi bi-exclamation-triangle me-1"></i>Google Drive is not available on this server yet.
+    </p>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
 
 <form method="post" action="/web/settings">
   <!-- Store Info -->
@@ -38,6 +112,10 @@
         <label class="form-label small fw-semibold">Tax Registration No.</label>
         <input name="tax_registration_number" type="text" class="form-control" value="{{ s.tax_registration_number }}">
       </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold">SSM No.</label>
+        <input name="store_ssm_number" type="text" class="form-control" value="{{ s.store_ssm_number }}">
+      </div>
     </div>
   </div>
 
@@ -65,6 +143,28 @@
         <label class="form-label small">Service Charge Rate (decimal, e.g. 0.10 = 10%)</label>
         <input name="service_charge_rate" type="number" step="0.001" class="form-control" value="{{ s.service_charge_rate or '0.10' }}">
       </div>
+    </div>
+  </div>
+
+  <!-- Cash Records -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-transparent fw-semibold">
+      <i class="bi bi-wallet2 me-2"></i>Cash Records
+    </div>
+    <div class="card-body">
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" name="payment_to_cash_record"
+               id="paymentCashToggle"
+               {{ 'checked' if s.payment_to_cash_record == '1' else '' }}>
+        <label class="form-check-label fw-semibold" for="paymentCashToggle">
+          Add Payment Income to Cash Records
+        </label>
+      </div>
+      <p class="text-muted small mb-0 mt-2">
+        Includes all completed payments using their original payment date.
+        Turning this off removes only automatic payment entries; manually added
+        Cash In, Cash Out and salary records are kept.
+      </p>
     </div>
   </div>
 

@@ -9,6 +9,13 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+# The vendored printing plugin is a separate Dart package with its own
+# pubspec/analyzer context. Analyse it from packages/printing, not as part of
+# the POS application's root package.
+analyzer:
+  exclude:
+    - packages/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

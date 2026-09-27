@@ -1,17 +1,21 @@
-# pos_app
+# K POS Flutter client
 
-A new Flutter project.
+Android-first cashier/admin client for K POS. It uses Riverpod, Dio,
+GoRouter and SQLite. The SQLite cache supports catalogue browsing, open-order
+editing and basic checkout when the API is unreachable.
 
-## Getting Started
+## Development
 
-This project is a starting point for a Flutter application.
+```sh
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+```
 
-A few resources to get you started if this is your first Flutter project:
+The debug APK is written to
+`build/app/outputs/flutter-apk/app-debug.apk`. The backend download copy lives
+at `../backend/static/downloads/kts-pos.apk`.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+See [`../SYSTEM_OVERVIEW.md`](../SYSTEM_OVERVIEW.md) for the complete runtime
+architecture, offline guarantees and deployment order.

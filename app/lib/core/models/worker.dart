@@ -18,12 +18,12 @@ class Worker {
   });
 
   factory Worker.fromJson(Map<String, dynamic> json) => Worker(
-        id: json['id'] as int,
-        name: json['name'] as String,
-        icNumber: json['ic_number'] as String?,
-        phone: json['phone'] as String?,
-        position: json['position'] as String?,
-        isActive: json['is_active'] as bool? ?? true,
-        createdAt: DateTime.parse(json['created_at'] as String),
-      );
+    id: json['id'] as int,
+    name: json['name'] as String,
+    icNumber: json['ic_number'] as String?,
+    phone: json['phone'] as String?,
+    position: json['position'] as String?,
+    isActive: json['is_active'] as bool? ?? true,
+    createdAt: DateTime.parse(json['created_at'] as String),
+  );
 }

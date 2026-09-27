@@ -1,4 +1,3 @@
-import io
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -11,6 +10,8 @@ from database import get_db
 from dependencies import get_current_user, require_permission
 import models
 import schemas
+from image_utils import load_upload_image
+from payment_cash_records import sync_payment_cash_records
 
 router = APIRouter(tags=["Settings"])
 
@@ -25,11 +26,15 @@ _DEFAULTS: dict[str, str] = {
     "service_charge_rate": "0.10",
     # Whether completed payments automatically create a cash_in cash record
     "payment_to_cash_record": "0",
+    # Whether salary payments require the worker to sign on the tablet
+    "require_salary_signature": "0",
     # Store info
     "store_name": "My Restaurant",
     "store_address": "",
     "store_phone": "",
     "store_email": "",
+    "store_ssm_number": "",
+    "tax_registration_number": "",
     "store_logo_path": "",
     # Theme
     "theme": "light",
@@ -63,10 +68,13 @@ def get_settings(db: Session = Depends(get_db), _=Depends(get_current_user)):
         service_charge_enabled=cfg["service_charge_enabled"] == "1",
         service_charge_rate=Decimal(cfg["service_charge_rate"]),
         payment_to_cash_record=cfg["payment_to_cash_record"] == "1",
+        require_salary_signature=cfg["require_salary_signature"] == "1",
         store_name=cfg["store_name"],
         store_address=cfg["store_address"],
         store_phone=cfg["store_phone"],
         store_email=cfg["store_email"],
+        store_ssm_number=cfg["store_ssm_number"],
+        tax_registration_number=cfg["tax_registration_number"],
         store_logo_path=cfg["store_logo_path"],
         theme=cfg["theme"],
         receipt_header=cfg["receipt_header"],
@@ -87,6 +95,9 @@ def update_settings(
     _=Depends(require_permission("can_manage_settings")),
 ):
     updates: dict[str, str] = {}
+    current_payment_to_cash_record = (
+        _get_settings(db)["payment_to_cash_record"] == "1"
+    )
 
     if body.sst_enabled is not None:
         updates["sst_enabled"] = "1" if body.sst_enabled else "0"
@@ -98,6 +109,8 @@ def update_settings(
         updates["service_charge_rate"] = str(body.service_charge_rate)
     if body.payment_to_cash_record is not None:
         updates["payment_to_cash_record"] = "1" if body.payment_to_cash_record else "0"
+    if body.require_salary_signature is not None:
+        updates["require_salary_signature"] = "1" if body.require_salary_signature else "0"
     if body.store_name is not None:
         updates["store_name"] = body.store_name
     if body.store_address is not None:
@@ -106,6 +119,10 @@ def update_settings(
         updates["store_phone"] = body.store_phone
     if body.store_email is not None:
         updates["store_email"] = body.store_email
+    if body.store_ssm_number is not None:
+        updates["store_ssm_number"] = body.store_ssm_number
+    if body.tax_registration_number is not None:
+        updates["tax_registration_number"] = body.tax_registration_number
     if body.store_logo_path is not None:
         updates["store_logo_path"] = body.store_logo_path
     if body.theme is not None:
@@ -135,6 +152,12 @@ def update_settings(
             row.value = val
         else:
             db.add(models.StoreSettings(key=key, value=val))
+
+    if (
+        body.payment_to_cash_record is not None
+        and body.payment_to_cash_record != current_payment_to_cash_record
+    ):
+        sync_payment_cash_records(db, enabled=body.payment_to_cash_record)
     db.commit()
     return get_settings(db)
 
@@ -148,18 +171,23 @@ async def upload_store_logo(
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WebP images are accepted")
 
-    data = await file.read()
-    img = Image.open(io.BytesIO(data)).convert("RGB")
+    try:
+        img = load_upload_image(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     existing = db.query(models.StoreSettings).filter(
         models.StoreSettings.key == "store_logo_path"
     ).first()
-    if existing and existing.value:
-        old_path = Path(__file__).parent / existing.value
-        old_path.unlink(missing_ok=True)
+    old_path = (
+        Path(__file__).parent / existing.value
+        if existing and existing.value
+        else None
+    )
 
     filename = f"store_logo_{uuid.uuid4().hex[:8]}.jpg"
     dest = UPLOAD_DIR / filename
+    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
     img.save(dest, format="JPEG", quality=90, optimize=True)
 
     relative_path = f"static/images/{filename}"
@@ -171,6 +199,8 @@ async def upload_store_logo(
     else:
         db.add(models.StoreSettings(key="store_logo_path", value=relative_path))
     db.commit()
+    if old_path:
+        old_path.unlink(missing_ok=True)
 
     return get_settings(db)
 
@@ -184,19 +214,23 @@ async def upload_duitnow_qr(
     if file.content_type not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WebP images are accepted")
 
-    data = await file.read()
-    img = Image.open(io.BytesIO(data)).convert("RGB")
+    try:
+        img = load_upload_image(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Delete old QR if exists
     existing = db.query(models.StoreSettings).filter(
         models.StoreSettings.key == "duitnow_qr_image_url"
     ).first()
-    if existing and existing.value:
-        old_path = Path(__file__).parent / existing.value
-        old_path.unlink(missing_ok=True)
+    old_path = (
+        Path(__file__).parent / existing.value
+        if existing and existing.value
+        else None
+    )
 
     filename = f"duitnow_qr_{uuid.uuid4().hex[:8]}.jpg"
     dest = UPLOAD_DIR / filename
+    img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
     img.save(dest, format="JPEG", quality=90, optimize=True)
 
     relative_path = f"static/images/{filename}"
@@ -208,5 +242,7 @@ async def upload_duitnow_qr(
     else:
         db.add(models.StoreSettings(key="duitnow_qr_image_url", value=relative_path))
     db.commit()
+    if old_path:
+        old_path.unlink(missing_ok=True)
 
     return get_settings(db)

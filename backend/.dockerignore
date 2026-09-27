@@ -3,7 +3,11 @@ venv_windows_backup/
 __pycache__/
 *.pyc
 .env
+.jwt_secret
 gdrive_credentials.json
 oauth_client_secret.json
 token.json
 backups/
+.pytest_cache/
+tests/
+requirements-dev.txt

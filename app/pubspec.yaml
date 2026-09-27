@@ -1,8 +1,8 @@
 name: pos_app
-description: "KTS POS - Restaurant Point of Sale System"
+description: "K POS - Restaurant Point of Sale System"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.11.5
@@ -51,6 +51,7 @@ dependencies:
 
   # File / share
   path_provider: ^2.1.5
+  web: ^1.1.1
 
   # UUID for offline order refs
   uuid: ^4.5.1

@@ -1,5 +1,11 @@
 class ApiConstants {
-  static const String defaultBaseUrl = 'http://10.0.2.2:8000';
-  static const Duration connectTimeout = Duration(seconds: 10);
-  static const Duration receiveTimeout = Duration(seconds: 30);
+  static const String defaultBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'https://htd5110-ktspos.koh01.com',
+  );
+  // Kept short so a dead connection (Tunnel down, no signal, etc.) fails
+  // fast into the app's offline fallback instead of leaving the UI looking
+  // stuck for the length of a long default timeout.
+  static const Duration connectTimeout = Duration(seconds: 5);
+  static const Duration receiveTimeout = Duration(seconds: 15);
 }

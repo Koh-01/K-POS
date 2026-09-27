@@ -1,7 +1,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+from sqlalchemy.exc import IntegrityError
 
 from database import get_db
 from dependencies import get_current_user, require_admin, require_permission
@@ -9,10 +9,30 @@ import models
 import schemas
 from settings_router import _get_settings
 from promotion_router import compute_discount, find_by_code, _check_active
+from time_utils import local_now
+from order_router import _validated_weight
 
 router = APIRouter()
 
 TWO_PLACES = Decimal("0.01")
+
+
+def _release_table_if_unused(db: Session, order: models.Order) -> None:
+    if not order.table_id:
+        return
+    another_open = db.query(models.Order.id).filter(
+        models.Order.table_id == order.table_id,
+        models.Order.id != order.id,
+        models.Order.status == "open",
+        models.Order.is_deleted == False,
+    ).first()
+    if another_open:
+        return
+    table = db.query(models.Table).filter(
+        models.Table.id == order.table_id
+    ).with_for_update().first()
+    if table:
+        table.status = "available"
 
 
 def _calc(
@@ -71,6 +91,8 @@ def payment_preview(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
+    if discount_percent < 0 or discount_percent > 100 or discount_amount < 0:
+        raise HTTPException(status_code=400, detail="Invalid discount")
     order = db.query(models.Order).filter(
         models.Order.id == order_id,
         models.Order.is_deleted == False,
@@ -96,11 +118,18 @@ def create_payment(
     if data.payment_method not in ("cash", "duitnow", "card"):
         raise HTTPException(status_code=400, detail="payment_method must be 'cash', 'duitnow', or 'card'")
 
+    if data.offline_ref:
+        existing = db.query(models.Payment).filter(
+            models.Payment.offline_ref == data.offline_ref
+        ).first()
+        if existing:
+            return existing
+
     order = db.query(models.Order).filter(
         models.Order.id == data.order_id,
         models.Order.is_deleted == False,
         models.Order.status == "open",
-    ).first()
+    ).with_for_update().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found or not open")
     if not order.items:
@@ -123,7 +152,7 @@ def create_payment(
             promo = db.query(models.Promotion).filter(
                 models.Promotion.id == data.promotion_id,
                 models.Promotion.is_deleted == False,
-            ).first()
+            ).with_for_update().first()
             if not promo:
                 raise HTTPException(status_code=404, detail="Promotion not found")
         else:
@@ -131,7 +160,7 @@ def create_payment(
             if not promo:
                 raise HTTPException(status_code=404, detail="Promo code not found or inactive")
 
-        now = datetime.now(timezone.utc)
+        now = local_now()
         err = _check_active(promo, now)
         if err:
             raise HTTPException(status_code=400, detail=err)
@@ -159,6 +188,7 @@ def create_payment(
 
     payment = models.Payment(
         order_id=order.id,
+        offline_ref=data.offline_ref,
         promotion_id=promo.id if promo else None,
         payment_method=data.payment_method,
         subtotal=result["subtotal"],
@@ -181,10 +211,7 @@ def create_payment(
         promo.usage_count = (promo.usage_count or 0) + 1
 
     order.status = "paid"
-    if order.table_id:
-        table = db.query(models.Table).filter(models.Table.id == order.table_id).first()
-        if table:
-            table.status = "available"
+    _release_table_if_unused(db, order)
 
     if settings_cfg.get("payment_to_cash_record") == "1":
         cash_record = models.CashRecord(
@@ -198,7 +225,17 @@ def create_payment(
         db.flush()
         payment.cash_record_id = cash_record.id
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if data.offline_ref:
+            existing = db.query(models.Payment).filter(
+                models.Payment.offline_ref == data.offline_ref
+            ).first()
+            if existing:
+                return existing
+        raise HTTPException(status_code=409, detail="Payment already exists")
     db.refresh(payment)
     return payment
 
@@ -304,7 +341,7 @@ def _payment_snapshot(payment: models.Payment) -> dict:
             }
             for item in order.items
         ],
-        "snapshotted_at": datetime.now(timezone.utc).isoformat(),
+        "snapshotted_at": local_now().isoformat(),
     }
 
 
@@ -344,10 +381,7 @@ def void_payment(
     order.status = "cancelled"
 
     # 释放桌位
-    if order.table_id:
-        table = db.query(models.Table).filter(models.Table.id == order.table_id).first()
-        if table:
-            table.status = "available"
+    _release_table_if_unused(db, order)
 
     # 撤销对应的 cash record（如果当初开了自动记账）
     if payment.cash_record_id:
@@ -410,7 +444,7 @@ def edit_paid_order(
             product_id=product.id,
             quantity=item_data.quantity,
             unit_price=product.price,
-            weight_kg=item_data.weight_kg,
+            weight_kg=_validated_weight(product, item_data.weight_kg),
             notes=item_data.notes,
         )
         db.add(new_item)

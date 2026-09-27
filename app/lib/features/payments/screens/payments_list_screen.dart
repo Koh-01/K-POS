@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/payment_provider.dart';
 import '../../../core/models/payment.dart';
@@ -50,16 +50,16 @@ class _PaymentTile extends StatelessWidget {
   const _PaymentTile({required this.payment, required this.ref});
 
   IconData get _methodIcon => switch (payment.paymentMethod) {
-        'duitnow' => Icons.qr_code,
-        'card' => Icons.credit_card,
-        _ => Icons.payments_outlined,
-      };
+    'duitnow' => Icons.qr_code,
+    'card' => Icons.credit_card,
+    _ => Icons.payments_outlined,
+  };
 
   String get _methodLabel => switch (payment.paymentMethod) {
-        'duitnow' => 'DuitNow',
-        'card' => 'Card',
-        _ => 'Cash',
-      };
+    'duitnow' => 'DuitNow',
+    'card' => 'Card',
+    _ => 'Cash',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -72,8 +72,7 @@ class _PaymentTile extends StatelessWidget {
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) =>
-                PaymentDetailScreen(paymentId: payment.id),
+            builder: (_) => PaymentDetailScreen(paymentId: payment.id),
           ),
         );
         ref.invalidate(paymentsListProvider);
@@ -84,39 +83,39 @@ class _PaymentTile extends StatelessWidget {
             : const Color(0xFF10B981).withValues(alpha: 0.15),
         child: Icon(
           _methodIcon,
-          color:
-              payment.isVoided ? Colors.grey : const Color(0xFF10B981),
+          color: payment.isVoided ? Colors.grey : const Color(0xFF10B981),
         ),
       ),
       title: Text(
         'Order #${payment.orderId}  •  ${formatRM(payment.grandTotal)}',
         style: TextStyle(
           fontWeight: FontWeight.w600,
-          decoration:
-              payment.isVoided ? TextDecoration.lineThrough : null,
+          decoration: payment.isVoided ? TextDecoration.lineThrough : null,
           color: payment.isVoided ? Colors.grey : null,
         ),
       ),
       subtitle: Text(
         '$dateStr  •  $_methodLabel${payment.isVoided ? '  • VOIDED' : ''}',
         style: TextStyle(
-            color: payment.isVoided ? Colors.grey : null, fontSize: 12),
+          color: payment.isVoided ? Colors.grey : null,
+          fontSize: 12,
+        ),
       ),
       trailing: payment.isVoided
           ? const Icon(Icons.block, color: Colors.grey, size: 18)
           : (ref.watch(authProvider).user?.canManagePayment ?? false)
-              ? PopupMenuButton<String>(
-                  onSelected: (v) {
-                    if (v == 'void') _confirmVoid(context);
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                        value: 'void',
-                        child: Text('Void',
-                            style: TextStyle(color: Colors.red))),
-                  ],
-                )
-              : null,
+          ? PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == 'void') _confirmVoid(context);
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'void',
+                  child: Text('Void', style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            )
+          : null,
     );
   }
 
@@ -134,31 +133,34 @@ class _PaymentTile extends StatelessWidget {
             TextField(
               controller: reasonCtrl,
               decoration: const InputDecoration(
-                  labelText: 'Reason', border: OutlineInputBorder()),
+                labelText: 'Reason',
+                border: OutlineInputBorder(),
+              ),
             ),
           ],
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Void',
-                  style: TextStyle(color: Colors.red))),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Void', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );
     if (ok == true && context.mounted) {
       final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
       try {
         await ApiClient.instance.post(
           '/payments/${payment.id}/void',
           data: {'reason': reasonCtrl.text.trim()},
         );
         ref.invalidate(paymentsListProvider);
-        messenger
-            .showSnackBar(const SnackBar(content: Text('Payment voided')));
+        messenger.showSnackBar(const SnackBar(content: Text('Payment voided')));
       } on ApiException catch (e) {
         messenger.showSnackBar(SnackBar(content: Text(e.message)));
       }

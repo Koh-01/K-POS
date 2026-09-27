@@ -1,6 +1,6 @@
 """
 Monthly report generator — creates a CSV with sales, top products, and cash records
-for a given month, then uploads it to Google Drive.
+for a given month, then uploads it to the restaurant's own Google Drive.
 
 Called automatically on the 1st of each month at 01:00 (APScheduler in main.py).
 Also exposed as POST /admin/monthly-report for manual triggers.
@@ -13,11 +13,13 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import Numeric, case, cast, func
 
 import models
-from database import SessionLocal
+from database import SessionLocal, select_restaurant_database
+from drive_connections import DriveNotConnected, upload_for_restaurant
 from gdrive_backup import _upload
+from tenant_backup import BACKUP_PREFIX
 
 TWO = Decimal("0.01")
 
@@ -77,25 +79,30 @@ def _build_csv(year: int, month: int, db: Session) -> str:
     w.writerow(["=== PRODUCT SALES ==="])
     w.writerow(["Rank", "Product", "Category", "Qty Sold", "Revenue (MYR)"])
 
+    sold_amount = case(
+        (models.OrderItem.weight_kg.isnot(None), models.OrderItem.weight_kg),
+        else_=cast(models.OrderItem.quantity, Numeric(12, 3)),
+    )
+    category_name = func.coalesce(models.Category.name, "Uncategorised")
     product_rows = (
         db.query(
             models.Product.name.label("product_name"),
-            models.Category.name.label("category_name"),
-            func.sum(models.OrderItem.quantity).label("total_qty"),
-            func.sum(models.OrderItem.unit_price * models.OrderItem.quantity).label("total_revenue"),
+            category_name.label("category_name"),
+            func.sum(sold_amount).label("total_qty"),
+            func.sum(models.OrderItem.unit_price * sold_amount).label("total_revenue"),
         )
         .select_from(models.Payment)
         .join(models.Order, models.Order.id == models.Payment.order_id)
         .join(models.OrderItem, models.OrderItem.order_id == models.Order.id)
         .join(models.Product, models.Product.id == models.OrderItem.product_id)
-        .join(models.Category, models.Category.id == models.Product.category_id)
+        .outerjoin(models.Category, models.Category.id == models.Product.category_id)
         .filter(
             models.Payment.status == "completed",
             models.Payment.created_at >= start_dt,
             models.Payment.created_at < end_dt,
         )
-        .group_by(models.Product.id, models.Product.name, models.Category.name)
-        .order_by(func.sum(models.OrderItem.quantity).desc())
+        .group_by(models.Product.id, models.Product.name, category_name)
+        .order_by(func.sum(sold_amount).desc())
         .all()
     )
 
@@ -141,29 +148,43 @@ def _build_csv(year: int, month: int, db: Session) -> str:
     return output.getvalue()
 
 
-def run_monthly_report(year: int, month: int) -> dict:
-    """Generate and upload the monthly report CSV. Returns filename + drive_file_id."""
-    folder_id = os.getenv("GDRIVE_FOLDER_ID")
-    if not folder_id:
-        raise RuntimeError("GDRIVE_FOLDER_ID not set in environment")
+def run_monthly_report(year: int, month: int, restaurant_id: int | None = None) -> dict:
+    """Generate and upload the monthly report CSV. Returns filename + drive_file_id.
 
+    Restaurant reports go to that restaurant's own connected Google Drive; the
+    all-restaurant report (restaurant_id=None) goes to the operator's Drive.
+    """
     db: Session = SessionLocal()
     try:
+        restaurant = None
+        if restaurant_id is not None:
+            restaurant = db.query(models.Restaurant).filter(models.Restaurant.id == restaurant_id).first()
+            if not restaurant:
+                raise RuntimeError("Restaurant not found")
+            if restaurant.drive_connection is None:
+                raise DriveNotConnected(
+                    "Google Drive is not connected. Connect it in Web Admin → Settings → Google Drive."
+                )
+            select_restaurant_database(db, restaurant)
+        else:
+            folder_id = os.getenv("GDRIVE_FOLDER_ID")
+            if not folder_id:
+                raise RuntimeError("GDRIVE_FOLDER_ID not set in environment")
         csv_content = _build_csv(year, month, db)
+
+        prefix = f"kpos_{restaurant.slug}" if restaurant is not None else "kpos_all"
+        filename = f"{prefix}_monthly_{year}_{month:02d}.csv"
+        tmp_path = Path(__file__).parent / "backups" / filename
+        tmp_path.parent.mkdir(exist_ok=True)
+        try:
+            tmp_path.write_text(csv_content, encoding="utf-8-sig")   # utf-8-sig for Excel compatibility
+            if restaurant is not None:
+                drive_file_id = upload_for_restaurant(db, restaurant, str(tmp_path), filename, BACKUP_PREFIX)
+            else:
+                drive_file_id = _upload(str(tmp_path), filename, folder_id)
+        finally:
+            tmp_path.unlink(missing_ok=True)
     finally:
         db.close()
-
-    filename = f"pos_monthly_{year}_{month:02d}.csv"
-    tmp_path = Path(__file__).parent / "backups" / filename
-    tmp_path.parent.mkdir(exist_ok=True)
-
-    try:
-        tmp_path.write_text(csv_content, encoding="utf-8-sig")   # utf-8-sig for Excel compatibility
-        drive_file_id = _upload(str(tmp_path), filename, folder_id)
-    finally:
-        try:
-            tmp_path.unlink()
-        except Exception:
-            pass
 
     return {"status": "ok", "filename": filename, "drive_file_id": drive_file_id, "year": year, "month": month}

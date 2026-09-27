@@ -3,6 +3,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../../../core/models/payment.dart';
 import '../../../core/models/order_item.dart';
+import '../../../core/models/store_settings.dart';
 import '../../../shared/utils/currency_formatter.dart';
 
 class ReceiptPdfService {
@@ -12,6 +13,7 @@ class ReceiptPdfService {
     required String storeName,
     String? storeAddress,
     String? storePhone,
+    StoreSettings? settings,
   }) async {
     final doc = pw.Document();
 
@@ -25,36 +27,83 @@ class ReceiptPdfService {
         build: (ctx) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
-            pw.Center(
-              child: pw.Text(storeName,
+            if (settings != null && settings.receiptHeader.isNotEmpty)
+              pw.Align(
+                alignment: switch (settings.receiptHeaderAlign) {
+                  0 => pw.Alignment.centerLeft,
+                  2 => pw.Alignment.centerRight,
+                  _ => pw.Alignment.center,
+                },
+                child: pw.Text(
+                  settings.receiptHeader,
                   style: pw.TextStyle(
-                      fontWeight: pw.FontWeight.bold, fontSize: 14)),
+                    fontSize: switch (settings.receiptHeaderSize) {
+                      0 => 9,
+                      2 => 14,
+                      _ => 11,
+                    },
+                  ),
+                ),
+              ),
+            pw.Center(
+              child: pw.Text(
+                storeName,
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
             ),
             if (storeAddress != null && storeAddress.isNotEmpty)
               pw.Center(
-                  child: pw.Text(storeAddress,
-                      style: const pw.TextStyle(fontSize: 10))),
+                child: pw.Text(
+                  storeAddress,
+                  style: const pw.TextStyle(fontSize: 10),
+                ),
+              ),
             if (storePhone != null && storePhone.isNotEmpty)
               pw.Center(
-                  child: pw.Text(storePhone,
-                      style: const pw.TextStyle(fontSize: 10))),
+                child: pw.Text(
+                  storePhone,
+                  style: const pw.TextStyle(fontSize: 10),
+                ),
+              ),
+            if (settings?.storeSsmNumber?.isNotEmpty ?? false)
+              pw.Center(
+                child: pw.Text(
+                  'SSM No: ${settings!.storeSsmNumber}',
+                  style: const pw.TextStyle(fontSize: 9),
+                ),
+              ),
+            if (settings?.taxRegistrationNumber?.isNotEmpty ?? false)
+              pw.Center(
+                child: pw.Text(
+                  'Tax No: ${settings!.taxRegistrationNumber}',
+                  style: const pw.TextStyle(fontSize: 9),
+                ),
+              ),
             pw.SizedBox(height: 6),
             pw.Divider(),
-            _row('Receipt #', '${payment.id}'),
             _row('Order #', '${payment.orderId}'),
             _row(
-              'Date',
               '${payment.createdAt.day}/${payment.createdAt.month}/${payment.createdAt.year} '
                   '${payment.createdAt.hour.toString().padLeft(2, '0')}:${payment.createdAt.minute.toString().padLeft(2, '0')}',
+              'Receipt No: ${payment.receiptNumber}',
             ),
-            _row('Method',
-                payment.paymentMethod == 'cash' ? 'Cash' : 'DuitNow QR'),
+            _row(
+              'Method',
+              payment.paymentMethod == 'cash' ? 'Cash' : 'DuitNow QR',
+            ),
             if (items.isNotEmpty) ...[
               pw.Divider(),
-              ...items.map((item) => _row(
-                    '${item.productName} x${item.quantity}',
-                    formatRM(item.subtotal),
-                  )),
+              ...items.map(
+                (item) => _row(
+                  item.weight != null
+                      ? '${item.productName} ${item.weight!.toStringAsFixed(3)}kg'
+                      : '${item.productName} x${item.quantity}',
+                  formatRM(item.subtotal),
+                ),
+              ),
             ],
             pw.Divider(),
             _row('Subtotal', formatRM(payment.subtotal)),
@@ -64,7 +113,12 @@ class ReceiptPdfService {
             if (payment.discount > 0)
               _row('Discount', '- ${formatRM(payment.discount)}'),
             pw.Divider(),
-            _row('TOTAL', formatRM(payment.grandTotal), bold: true, fontSize: 13),
+            _row(
+              'TOTAL',
+              formatRM(payment.grandTotal),
+              bold: true,
+              fontSize: 13,
+            ),
             if (payment.cashReceived != null) ...[
               pw.SizedBox(height: 4),
               _row('Cash', formatRM(payment.cashReceived!)),
@@ -72,11 +126,17 @@ class ReceiptPdfService {
             ],
             pw.SizedBox(height: 10),
             pw.Divider(),
-            pw.Center(
-              child: pw.Text('Thank you!',
+            if ((settings?.receiptFooter ?? 'Thank you!').isNotEmpty)
+              pw.Center(
+                child: pw.Text(
+                  settings?.receiptFooter ?? 'Thank you!',
                   style: pw.TextStyle(
-                      fontStyle: pw.FontStyle.italic, fontSize: 11)),
-            ),
+                    fontStyle: pw.FontStyle.italic,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            pw.SizedBox(height: 18 * PdfPageFormat.mm),
           ],
         ),
       ),
@@ -88,11 +148,16 @@ class ReceiptPdfService {
     );
   }
 
-  static pw.Widget _row(String label, String value,
-      {bool bold = false, double fontSize = 11}) {
+  static pw.Widget _row(
+    String label,
+    String value, {
+    bool bold = false,
+    double fontSize = 11,
+  }) {
     final style = pw.TextStyle(
-        fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
-        fontSize: fontSize);
+      fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+      fontSize: fontSize,
+    );
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 2),
       child: pw.Row(

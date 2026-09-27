@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:typed_data';
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/worker.dart';
@@ -7,6 +9,7 @@ import '../../../features/payments/services/receipt_printer.dart';
 import '../../../features/settings/providers/settings_provider.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/widgets/signature_pad.dart';
 
 // ── Providers ──────────────────────────────────────────────────────────────
 
@@ -17,8 +20,9 @@ final _workersProvider = FutureProvider.autoDispose<List<Worker>>((ref) async {
       .toList();
 });
 
-final _paymentsProvider =
-    FutureProvider.autoDispose<List<SalaryPayment>>((ref) async {
+final _paymentsProvider = FutureProvider.autoDispose<List<SalaryPayment>>((
+  ref,
+) async {
   final res = await ApiClient.instance.get('/salary/payments');
   return (res.data as List)
       .map((e) => SalaryPayment.fromJson(e as Map<String, dynamic>))
@@ -43,18 +47,11 @@ class SalaryScreen extends ConsumerWidget {
             indicatorColor: Colors.white,
             tabs: const [
               Tab(icon: Icon(Icons.people_outline), text: 'Workers / 员工'),
-              Tab(
-                  icon: Icon(Icons.payments_outlined),
-                  text: 'History / 薪资记录'),
+              Tab(icon: Icon(Icons.payments_outlined), text: 'History / 薪资记录'),
             ],
           ),
         ),
-        body: const TabBarView(
-          children: [
-            _WorkersTab(),
-            _PaymentsTab(),
-          ],
-        ),
+        body: const TabBarView(children: [_WorkersTab(), _PaymentsTab()]),
       ),
     );
   }
@@ -76,12 +73,13 @@ class _WorkersTab extends ConsumerWidget {
         data: (workers) => workers.isEmpty
             ? const Center(
                 child: Text(
-                'No workers yet.\nTap + to add one.',
-                textAlign: TextAlign.center,
-              ))
+                  'No workers yet.\nTap + to add one.',
+                  textAlign: TextAlign.center,
+                ),
+              )
             : ListView.separated(
                 itemCount: workers.length,
-                separatorBuilder: (_, __) =>
+                separatorBuilder: (_, _) =>
                     const Divider(height: 1, indent: 72),
                 itemBuilder: (ctx, i) => _WorkerTile(
                   worker: workers[i],
@@ -131,18 +129,21 @@ class _WorkerTile extends StatelessWidget {
     ].join(' · ');
 
     return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: CircleAvatar(
         backgroundColor: const Color(0xFF1E6FD9).withValues(alpha: 0.15),
         child: Text(
           worker.name[0].toUpperCase(),
           style: const TextStyle(
-              color: Color(0xFF1E6FD9), fontWeight: FontWeight.bold),
+            color: Color(0xFF1E6FD9),
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
-      title: Text(worker.name,
-          style: const TextStyle(fontWeight: FontWeight.w600)),
+      title: Text(
+        worker.name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
       subtitle: subtitle.isNotEmpty ? Text(subtitle) : null,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -153,8 +154,7 @@ class _WorkerTile extends StatelessWidget {
             label: const Text('Pay'),
             style: TextButton.styleFrom(
               foregroundColor: const Color(0xFF10B981),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             ),
           ),
           PopupMenuButton<String>(
@@ -165,8 +165,9 @@ class _WorkerTile extends StatelessWidget {
                   isScrollControlled: true,
                   useSafeArea: true,
                   shape: const RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(16)),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(16),
+                    ),
                   ),
                   builder: (_) => _WorkerFormSheet(worker: worker),
                 );
@@ -185,7 +186,8 @@ class _WorkerTile extends StatelessWidget {
                       TextButton(
                         onPressed: () => Navigator.pop(ctx, true),
                         style: TextButton.styleFrom(
-                            foregroundColor: Colors.red),
+                          foregroundColor: Colors.red,
+                        ),
                         child: const Text('Remove'),
                       ),
                     ],
@@ -193,13 +195,17 @@ class _WorkerTile extends StatelessWidget {
                 );
                 if (ok == true && context.mounted) {
                   try {
-                    await ApiClient.instance
-                        .delete('/salary/workers/${worker.id}');
+                    await ApiClient.instance.delete(
+                      '/salary/workers/${worker.id}',
+                    );
                     onRefreshWorkers();
                   } catch (e) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(friendlyError(e))));
+                      ScaffoldMessenger.of(context)
+                        ..clearSnackBars()
+                        ..showSnackBar(
+                          SnackBar(content: Text(friendlyError(e))),
+                        );
                     }
                   }
                 }
@@ -207,8 +213,7 @@ class _WorkerTile extends StatelessWidget {
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'edit', child: Text('Edit / 编辑')),
-              PopupMenuItem(
-                  value: 'delete', child: Text('Remove / 删除')),
+              PopupMenuItem(value: 'delete', child: Text('Remove / 删除')),
             ],
           ),
         ],
@@ -246,8 +251,7 @@ class _PaymentsTab extends ConsumerWidget {
           ? const Center(child: Text('No salary payments yet / 暂无薪资记录'))
           : ListView.separated(
               itemCount: payments.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(height: 1, indent: 72),
+              separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
               itemBuilder: (ctx, i) => _PaymentTile(
                 payment: payments[i],
                 onRefresh: () => ref.invalidate(_paymentsProvider),
@@ -269,16 +273,19 @@ class _PaymentTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final p = payment;
     return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: CircleAvatar(
-        backgroundColor:
-            const Color(0xFF10B981).withValues(alpha: 0.12),
-        child: const Icon(Icons.payments_outlined,
-            color: Color(0xFF10B981), size: 20),
+        backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.12),
+        child: const Icon(
+          Icons.payments_outlined,
+          color: Color(0xFF10B981),
+          size: 20,
+        ),
       ),
-      title: Text(p.workerName,
-          style: const TextStyle(fontWeight: FontWeight.w600)),
+      title: Text(
+        p.workerName,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
       subtitle: Text(
         [
           p.monthLabel,
@@ -288,6 +295,12 @@ class _PaymentTile extends ConsumerWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (p.signatureImageUrl != null)
+            IconButton(
+              icon: const Icon(Icons.draw_outlined, size: 18),
+              tooltip: 'View Signature',
+              onPressed: () => _viewSignature(context, p),
+            ),
           Text(
             formatRM(p.amount),
             style: const TextStyle(
@@ -307,8 +320,9 @@ class _PaymentTile extends ConsumerWidget {
                   isScrollControlled: true,
                   useSafeArea: true,
                   shape: const RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(16)),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(16),
+                    ),
                   ),
                   builder: (_) => _EditPaymentSheet(payment: p),
                 );
@@ -319,15 +333,18 @@ class _PaymentTile extends ConsumerWidget {
                   builder: (ctx) => AlertDialog(
                     title: const Text('Delete Payment / 删除记录'),
                     content: Text(
-                        'Delete ${p.workerName} ${p.monthLabel} ${formatRM(p.amount)}?'),
+                      'Delete ${p.workerName} ${p.monthLabel} ${formatRM(p.amount)}?',
+                    ),
                     actions: [
                       TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('Cancel')),
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
                       TextButton(
                         onPressed: () => Navigator.pop(ctx, true),
                         style: TextButton.styleFrom(
-                            foregroundColor: Colors.red),
+                          foregroundColor: Colors.red,
+                        ),
                         child: const Text('Delete'),
                       ),
                     ],
@@ -335,13 +352,15 @@ class _PaymentTile extends ConsumerWidget {
                 );
                 if (ok == true) {
                   try {
-                    await ApiClient.instance
-                        .delete('/salary/payments/${p.id}');
+                    await ApiClient.instance.delete('/salary/payments/${p.id}');
                     onRefresh();
                   } catch (e) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(friendlyError(e))));
+                      ScaffoldMessenger.of(context)
+                        ..clearSnackBars()
+                        ..showSnackBar(
+                          SnackBar(content: Text(friendlyError(e))),
+                        );
                     }
                   }
                 }
@@ -350,29 +369,34 @@ class _PaymentTile extends ConsumerWidget {
             itemBuilder: (_) => const [
               PopupMenuItem(
                 value: 'reprint',
-                child: Row(children: [
-                  Icon(Icons.print_outlined, size: 18),
-                  SizedBox(width: 10),
-                  Text('Reprint / 重新打印'),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(Icons.print_outlined, size: 18),
+                    SizedBox(width: 10),
+                    Text('Reprint / 重新打印'),
+                  ],
+                ),
               ),
               PopupMenuItem(
                 value: 'edit',
-                child: Row(children: [
-                  Icon(Icons.edit_outlined, size: 18),
-                  SizedBox(width: 10),
-                  Text('Edit Amount / 修改数额'),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_outlined, size: 18),
+                    SizedBox(width: 10),
+                    Text('Edit Amount / 修改数额'),
+                  ],
+                ),
               ),
               PopupMenuDivider(),
               PopupMenuItem(
                 value: 'delete',
-                child: Row(children: [
-                  Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                  SizedBox(width: 10),
-                  Text('Delete / 删除',
-                      style: TextStyle(color: Colors.red)),
-                ]),
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                    SizedBox(width: 10),
+                    Text('Delete / 删除', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
               ),
             ],
           ),
@@ -381,22 +405,59 @@ class _PaymentTile extends ConsumerWidget {
     );
   }
 
-  Future<void> _reprint(
-      BuildContext context, WidgetRef ref, SalaryPayment p) async {
-    final connected = await ReceiptPrinter.isConnected ?? false;
-    if (!connected) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: const Text('Printer not connected. Please connect a printer in Settings first.'),
-            backgroundColor: Colors.red,
+  void _viewSignature(BuildContext context, SalaryPayment p) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${p.workerName} · ${p.monthLabel}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  color: Colors.white,
+                  child: Image.network(
+                    p.signatureImageUrl!,
+                    errorBuilder: (_, _, _) => const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('Failed to load signature'),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+              ),
+            ],
           ),
-        );
-      }
-      return;
-    }
-    final settings = await ref.read(settingsProvider.future);
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reprint(
+    BuildContext context,
+    WidgetRef ref,
+    SalaryPayment p,
+  ) async {
     try {
+      final settings = await ref.read(settingsProvider.future);
       await ReceiptPrinter.printSalarySlip(
         workerName: p.workerName,
         position: '',
@@ -406,14 +467,23 @@ class _PaymentTile extends ConsumerWidget {
         note: p.note,
         storeName: settings.storeName,
       );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(const SnackBar(content: Text('Salary slip printed')));
+      }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Print failed. Make sure the printer is connected and try again.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Print failed. Make sure the printer is connected and try again.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
       }
     }
   }
@@ -438,9 +508,9 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
   void initState() {
     super.initState();
     _amountCtrl = TextEditingController(
-        text: widget.payment.amount.toStringAsFixed(2));
-    _noteCtrl =
-        TextEditingController(text: widget.payment.note ?? '');
+      text: widget.payment.amount.toStringAsFixed(2),
+    );
+    _noteCtrl = TextEditingController(text: widget.payment.note ?? '');
   }
 
   @override
@@ -453,23 +523,29 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
   Future<void> _save() async {
     final amount = double.tryParse(_amountCtrl.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a valid amount.')));
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Please enter a valid amount.')),
+        );
       return;
     }
     setState(() => _saving = true);
     try {
-      await ApiClient.instance
-          .put('/salary/payments/${widget.payment.id}', data: {
-        'amount': amount,
-        'note': _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
-      });
+      await ApiClient.instance.put(
+        '/salary/payments/${widget.payment.id}',
+        data: {
+          'amount': amount,
+          'note': _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
+        },
+      );
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -478,8 +554,9 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
   Widget build(BuildContext context) {
     final p = widget.payment;
     return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Column(
@@ -497,12 +574,15 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
                 ),
               ),
             ),
-            const Text('Edit Salary / 修改薪资',
-                style:
-                    TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            const Text(
+              'Edit Salary / 修改薪资',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 4),
-            Text('${p.workerName} · ${p.monthLabel}',
-                style: TextStyle(color: Colors.grey.shade600)),
+            Text(
+              '${p.workerName} · ${p.monthLabel}',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
             const SizedBox(height: 16),
             TextField(
               controller: _amountCtrl,
@@ -511,8 +591,9 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
                 prefixText: 'RM ',
                 border: OutlineInputBorder(),
               ),
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               autofocus: true,
             ),
             const SizedBox(height: 12),
@@ -527,14 +608,15 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
             ElevatedButton(
               onPressed: _saving ? null : _save,
               style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
               child: _saving
                   ? const SizedBox(
                       height: 18,
                       width: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Save / 保存',
-                      style: TextStyle(fontSize: 16)),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Save / 保存', style: TextStyle(fontSize: 16)),
             ),
           ],
         ),
@@ -581,7 +663,8 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Name is required')));
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text('Name is required')));
       return;
     }
     setState(() => _saving = true);
@@ -591,21 +674,23 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
         'position': _positionCtrl.text.trim().isEmpty
             ? null
             : _positionCtrl.text.trim(),
-        'phone':
-            _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
       };
       if (widget.worker == null) {
         await ApiClient.instance.post('/salary/workers', data: payload);
       } else {
-        await ApiClient.instance
-            .put('/salary/workers/${widget.worker!.id}', data: payload);
+        await ApiClient.instance.put(
+          '/salary/workers/${widget.worker!.id}',
+          data: payload,
+        );
       }
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -614,8 +699,9 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
   Widget build(BuildContext context) {
     final isEdit = widget.worker != null;
     return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Column(
@@ -635,8 +721,7 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
             ),
             Text(
               isEdit ? 'Edit Worker / 编辑员工' : 'Add Worker / 添加员工',
-              style:
-                  const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -670,15 +755,18 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
             ElevatedButton(
               onPressed: _saving ? null : _save,
               style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
               child: _saving
                   ? const SizedBox(
                       height: 18,
                       width: 18,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2))
-                  : Text(isEdit ? 'Save / 保存' : 'Add / 添加',
-                      style: const TextStyle(fontSize: 16)),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(
+                      isEdit ? 'Save / 保存' : 'Add / 添加',
+                      style: const TextStyle(fontSize: 16),
+                    ),
             ),
           ],
         ),
@@ -720,26 +808,72 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
   }
 
   static const _monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
 
   Future<void> _save() async {
     final amount = double.tryParse(_amountCtrl.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a valid amount.')));
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Please enter a valid amount.')),
+        );
       return;
     }
+
+    // Signature is captured *before* the payment is created, so cancelling
+    // it aborts the whole save instead of leaving an unsigned payment on
+    // record when the setting requires one.
+    final requireSignature =
+        ref.read(settingsProvider).value?.requireSalarySignature ?? false;
+    Uint8List? signature;
+    if (requireSignature) {
+      if (!mounted) return;
+      signature = await SignatureCaptureSheet.show(
+        context,
+        title: 'Worker Signature',
+        subtitle:
+            '${widget.worker.name} · ${_monthNames[_month - 1]} $_year · ${formatRM(amount)}',
+      );
+      if (signature == null) return; // cancelled — nothing saved
+    }
+
     setState(() => _saving = true);
     try {
-      await ApiClient.instance.post('/salary/payments', data: {
-        'worker_id': widget.worker.id,
-        'year': _year,
-        'month': _month,
-        'amount': amount,
-        if (_noteCtrl.text.trim().isNotEmpty) 'note': _noteCtrl.text.trim(),
-      });
+      final res = await ApiClient.instance.post(
+        '/salary/payments',
+        data: {
+          'worker_id': widget.worker.id,
+          'year': _year,
+          'month': _month,
+          'amount': amount,
+          if (_noteCtrl.text.trim().isNotEmpty) 'note': _noteCtrl.text.trim(),
+        },
+      );
+
+      if (signature != null) {
+        final paymentId = (res.data as Map<String, dynamic>)['id'];
+        final form = FormData.fromMap({
+          'file': MultipartFile.fromBytes(signature, filename: 'signature.png'),
+        });
+        await ApiClient.instance.post(
+          '/salary/payments/$paymentId/signature',
+          data: form,
+        );
+      }
+
       if (!mounted) return;
 
       // Ask about printing BEFORE popping (context still valid here)
@@ -748,43 +882,34 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
         builder: (ctx) => AlertDialog(
           title: const Text('Payment Saved!'),
           content: Text(
-              '${widget.worker.name} · ${_monthNames[_month - 1]} $_year\n${formatRM(amount)}'),
+            '${widget.worker.name} · ${_monthNames[_month - 1]} $_year\n${formatRM(amount)}',
+          ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Skip')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Skip'),
+            ),
             ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.print, size: 16),
-                    SizedBox(width: 6),
-                    Text('Print Slip'),
-                  ],
-                )),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.print, size: 16),
+                  SizedBox(width: 6),
+                  Text('Print Slip'),
+                ],
+              ),
+            ),
           ],
         ),
       );
 
       if (!mounted) return;
-      Navigator.pop(context); // close the pay sheet
-
       if (shouldPrint == true) {
-        final connected = await ReceiptPrinter.isConnected ?? false;
-        if (!connected) {
-          // ignore: use_build_context_synchronously
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: const Text('Printer not connected. Please connect a printer in Settings first.'),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 3),
-            ),
-          );
-          return;
-        }
-        final settings = await ref.read(settingsProvider.future);
         try {
+          // Print while this sheet is still mounted. Closing it first disposed
+          // the ConsumerState and made later ref/context access fail.
+          final settings = await ref.read(settingsProvider.future);
           await ReceiptPrinter.printSalarySlip(
             workerName: widget.worker.name,
             position: widget.worker.position ?? '',
@@ -794,20 +919,35 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
             note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
             storeName: settings.storeName,
           );
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+              ..clearSnackBars()
+              ..showSnackBar(
+                const SnackBar(content: Text('Salary slip printed')),
+              );
+          }
         } catch (e) {
-          // ignore: use_build_context_synchronously
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Print failed. Make sure the printer is connected and try again.'),
-                backgroundColor: Colors.red,
-              ));
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+              ..clearSnackBars()
+              ..showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Print failed. Make sure the printer is connected and try again.',
+                  ),
+                  backgroundColor: Colors.red,
+                ),
+              );
+          }
         }
       }
+      if (mounted) Navigator.pop(context); // close the pay sheet last
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -818,8 +958,9 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
     final years = [now.year - 1, now.year, now.year + 1];
 
     return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Column(
@@ -844,8 +985,7 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
             const SizedBox(height: 4),
             Text(
               widget.worker.name,
-              style: TextStyle(
-                  fontSize: 15, color: Colors.grey.shade600),
+              style: TextStyle(fontSize: 15, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 16),
 
@@ -855,12 +995,14 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
                 Expanded(
                   flex: 2,
                   child: DropdownButtonFormField<int>(
-                    value: _month,
+                    initialValue: _month,
                     decoration: const InputDecoration(
                       labelText: 'Month / 月份',
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
                     ),
                     items: List.generate(
                       12,
@@ -875,16 +1017,22 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: DropdownButtonFormField<int>(
-                    value: _year,
+                    initialValue: _year,
                     decoration: const InputDecoration(
                       labelText: 'Year / 年',
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
                     ),
                     items: years
-                        .map((y) => DropdownMenuItem(
-                            value: y, child: Text(y.toString())))
+                        .map(
+                          (y) => DropdownMenuItem(
+                            value: y,
+                            child: Text(y.toString()),
+                          ),
+                        )
                         .toList(),
                     onChanged: (v) => setState(() => _year = v!),
                   ),
@@ -901,8 +1049,9 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
                 prefixText: 'RM ',
                 border: OutlineInputBorder(),
               ),
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               autofocus: true,
             ),
             const SizedBox(height: 12),
@@ -929,9 +1078,14 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
                       height: 18,
                       width: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Text('Confirm & Pay / 确认发薪',
-                      style: TextStyle(fontSize: 16)),
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text(
+                      'Confirm & Pay / 确认发薪',
+                      style: TextStyle(fontSize: 16),
+                    ),
             ),
           ],
         ),

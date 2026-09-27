@@ -1,22 +1,32 @@
-﻿import 'dart:async';
+import 'dart:async';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/cashier_provider.dart';
+import '../../../core/db/local_db.dart';
 import '../../../core/models/product.dart';
 import '../../../core/models/order_item.dart';
+import '../../../core/models/order.dart';
 import '../../../core/models/promotion.dart';
 import '../../../features/payments/providers/payment_provider.dart';
 import '../../../features/payments/screens/payment_screen.dart';
+import '../../../features/payments/services/receipt_printer.dart';
 import '../../../features/products/providers/products_provider.dart';
 import '../../../features/auth/providers/auth_provider.dart';
+import '../../../features/settings/providers/settings_provider.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../../shared/utils/grid_utils.dart';
+import '../../../shared/utils/natural_compare.dart';
 
 class OrderScreen extends ConsumerStatefulWidget {
   final int? orderId;
-  const OrderScreen({super.key, this.orderId});
+  // Set when reopening an order that was created offline and hasn't synced
+  // to the server yet (so it has no orderId to look up by).
+  final String? offlineRef;
+  const OrderScreen({super.key, this.orderId, this.offlineRef});
 
   @override
   ConsumerState<OrderScreen> createState() => _OrderScreenState();
@@ -25,10 +35,16 @@ class OrderScreen extends ConsumerStatefulWidget {
 class _OrderScreenState extends ConsumerState<OrderScreen> {
   bool _loading = false;
   bool _saving = false;
+  bool _printingBill = false;
   int? _selectedCategoryId;
   String _search = '';
   // The persisted order id — null until the first auto-save creates it.
   int? _orderId;
+  // If created while offline, the queued order's local ref — kept so
+  // repeated auto-saves update the *same* pending order instead of
+  // creating a new one each time (that new one never gets an id, so
+  // _orderId alone can't track it).
+  String? _offlineOrderRef;
   Timer? _autoSaveDebounce;
   bool _suppressNextAutoSave = false;
 
@@ -36,7 +52,25 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
   void initState() {
     super.initState();
     _orderId = widget.orderId;
-    if (_orderId != null) _loadExistingOrder();
+    _offlineOrderRef = widget.offlineRef;
+    if (_orderId != null) {
+      _loadExistingOrder();
+    } else if (_offlineOrderRef != null) {
+      _loadOfflineOrder(_offlineOrderRef!);
+    }
+  }
+
+  Future<void> _loadOfflineOrder(String offlineRef) async {
+    setState(() => _loading = true);
+    try {
+      final order = await LocalDb.getPendingOrderByRef(offlineRef);
+      if (order != null) {
+        _suppressNextAutoSave = true;
+        ref.read(cartProvider.notifier).loadFromOrder(order);
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -52,9 +86,17 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       _suppressNextAutoSave = true;
       ref.read(cartProvider.notifier).loadFromOrder(order);
     } catch (e) {
-      if (mounted) {
+      // Offline: fall back to whatever's cached locally for this order —
+      // prefers a not-yet-synced edit over the last-known-from-server
+      // snapshot, so reopening the screen doesn't discard queued changes.
+      final cached = await LocalDb.getCachedOrderById(_orderId!);
+      if (cached != null) {
+        _suppressNextAutoSave = true;
+        ref.read(cartProvider.notifier).loadFromOrder(cached);
+      } else if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -66,22 +108,52 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
     _autoSaveDebounce = Timer(const Duration(milliseconds: 600), _autoSave);
   }
 
-  Future<void> _autoSave() async {
+  // Coalesces overlapping auto-saves: if one is already in flight (e.g.
+  // stuck waiting on a dead connection) and another edit comes in, we don't
+  // fire a second, fully-parallel save — that's what was causing "saved
+  // but then clobbered by an older, slower save" and duplicate offline
+  // records. Instead we just mark that another save is needed and it runs
+  // right after the current one finishes, by which point _orderId/
+  // _offlineOrderRef are already correctly set.
+  Future<void>? _autoSaveFuture;
+  bool _autoSaveQueued = false;
+
+  Future<void> _autoSave() {
     _autoSaveDebounce?.cancel();
+    if (_autoSaveFuture != null) {
+      _autoSaveQueued = true;
+      return _autoSaveFuture!;
+    }
+    final future = _runAutoSave();
+    _autoSaveFuture = future;
+    return future;
+  }
+
+  Future<void> _runAutoSave() async {
     final cart = ref.read(cartProvider);
-    if (cart.items.isEmpty) return;
-    if (mounted) setState(() => _saving = true);
-    try {
-      final order =
-          await OrderService.createOrUpdate(cart, existingOrderId: _orderId);
-      _orderId = order.id ?? _orderId;
-      ref.invalidate(openOrdersProvider);
-      if (cart.tableId != null) ref.invalidate(tablesProvider);
-    } catch (_) {
-      // Silent: offline edits are queued locally and retried on the next
-      // change, a snackbar on every edit would be noisy for auto-save.
-    } finally {
-      if (mounted) setState(() => _saving = false);
+    if (cart.items.isNotEmpty) {
+      if (mounted) setState(() => _saving = true);
+      try {
+        final order = await OrderService.createOrUpdate(
+          cart,
+          existingOrderId: _orderId,
+          offlineRef: _offlineOrderRef,
+        );
+        _orderId = order.id ?? _orderId;
+        _offlineOrderRef = order.offlineRef ?? _offlineOrderRef;
+        ref.invalidate(openOrdersProvider);
+        if (cart.tableId != null) ref.invalidate(tablesProvider);
+      } catch (_) {
+        // Silent: offline edits are queued locally and retried on the next
+        // change, a snackbar on every edit would be noisy for auto-save.
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
+    }
+    _autoSaveFuture = null;
+    if (_autoSaveQueued) {
+      _autoSaveQueued = false;
+      await _autoSave();
     }
   }
 
@@ -92,34 +164,110 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
     if (mounted) context.go('/cashier');
   }
 
+  Future<void> _printBill() async {
+    if (_printingBill) return;
+    final initialCart = ref.read(cartProvider);
+    if (initialCart.items.isEmpty) return;
+
+    setState(() => _printingBill = true);
+    try {
+      // Flush the debounce first so the bill corresponds to a durable open
+      // order, while still allowing the same flow to work in offline mode.
+      await _autoSave();
+      final cart = ref.read(cartProvider);
+      final settings = await ref.read(settingsProvider.future);
+      final order = Order(
+        id: _orderId,
+        offlineRef: _offlineOrderRef,
+        tableId: cart.tableId,
+        tableName: cart.tableName,
+        orderType: cart.orderType,
+        status: 'open',
+        notes: cart.notes,
+        items: cart.items,
+      );
+      final summary = calculateOfflineCheckout(cart.items, settings);
+      final user = ref.read(authProvider).user;
+
+      if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+        throw Exception(
+          'Bluetooth thermal printing is available only in the Android POS app.',
+        );
+      }
+      await ReceiptPrinter.printBill(
+        order: order,
+        summary: summary,
+        storeName: settings.storeName,
+        storeAddress: settings.storeAddress,
+        storePhone: settings.storePhone,
+        settings: settings,
+        employeeName: user?.fullName.isNotEmpty == true
+            ? user!.fullName
+            : user?.username,
+        posName: user?.username,
+      );
+    } catch (e) {
+      if (mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Printer Error'),
+            content: Text(
+              'Failed to print bill.\n\n$e\n\n'
+              'Pair the thermal printer in Android Bluetooth settings, then '
+              'connect it from POS Settings and try again.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _printingBill = false);
+    }
+  }
+
   Future<void> _proceedToPayment({int? promotionId, String? promoCode}) async {
     final cart = ref.read(cartProvider);
     if (cart.items.isEmpty) return;
     final extra = <String, dynamic>{};
     if (promotionId != null) extra['promotionId'] = promotionId;
-    if (promoCode != null && promoCode.isNotEmpty) extra['promoCode'] = promoCode;
+    if (promoCode != null && promoCode.isNotEmpty) {
+      extra['promoCode'] = promoCode;
+    }
 
     _autoSaveDebounce?.cancel();
+    // Let any auto-save already in flight finish first (and pick up its
+    // resulting _orderId/_offlineOrderRef) instead of racing it with our
+    // own save of what might be the same cart state.
+    if (_autoSaveFuture != null) await _autoSaveFuture;
     setState(() => _loading = true);
     try {
-      final order =
-          await OrderService.createOrUpdate(cart, existingOrderId: _orderId);
+      final order = await OrderService.createOrUpdate(
+        cart,
+        existingOrderId: _orderId,
+        offlineRef: _offlineOrderRef,
+      );
       _orderId = order.id ?? _orderId;
+      _offlineOrderRef = order.offlineRef ?? _offlineOrderRef;
       if (mounted) {
         ref.invalidate(openOrdersProvider);
         if (cart.tableId != null) ref.invalidate(tablesProvider);
         if (order.id != null) {
-          context.push('/cashier/payment/${order.id}',
-              extra: extra.isEmpty ? null : extra);
+          context.push(
+            '/cashier/payment/${order.id}',
+            extra: extra.isEmpty ? null : extra,
+          );
         } else {
           // Offline order: go to payment screen with local calculation
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => PaymentScreen(
-                orderId: -1,
-                offlineOrder: order,
-              ),
+              builder: (_) => PaymentScreen(orderId: -1, offlineOrder: order),
             ),
           );
         }
@@ -127,7 +275,8 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -150,7 +299,7 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       _scheduleAutoSave();
     });
 
-    final title = cart.orderType == 'takeaway'
+    final title = cart.orderType == OrderTypes.takeAway
         ? 'Takeaway'
         : (cart.tableName ?? 'New Order');
 
@@ -164,6 +313,22 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
         appBar: AppBar(
           title: Text(title),
           actions: [
+            if (cart.items.isNotEmpty)
+              TextButton.icon(
+                onPressed: _saving || _printingBill ? null : _printBill,
+                icon: _printingBill
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white70,
+                        ),
+                      )
+                    : const Icon(Icons.print_outlined),
+                label: Text(_printingBill ? 'Printing…' : 'Print Bill'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+              ),
             if (_saving)
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
@@ -172,74 +337,96 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white70),
+                      strokeWidth: 2,
+                      color: Colors.white70,
+                    ),
                   ),
                 ),
               )
             else if (cart.items.isNotEmpty)
               TextButton.icon(
-                onPressed: _saveAndExit,
+                onPressed: _printingBill ? null : _saveAndExit,
                 icon: const Icon(Icons.save, color: Colors.white),
-                label: const Text('Save', style: TextStyle(color: Colors.white)),
+                label: const Text(
+                  'Save',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
           ],
         ),
         body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : LayoutBuilder(
-              builder: (_, constraints) {
-                final isWide = constraints.maxWidth >= 680;
-                final catalog = productsAsync.when(
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (e, _) => Center(child: Text(loadError(e))),
-                  data: (data) => _ProductCatalog(
-                    products: data.products,
-                    categories: data.categories,
-                    selectedCategoryId: _selectedCategoryId,
-                    onCategorySelected: (id) =>
-                        setState(() => _selectedCategoryId = id),
-                    search: _search,
-                    onSearchChanged: (v) => setState(() => _search = v),
-                  ),
-                );
-
-                if (isWide) {
-                  return Row(children: [
-                    Expanded(flex: 3, child: catalog),
-                    Container(
-                      width: 300,
-                      decoration: BoxDecoration(
-                        border: Border(
-                            left: BorderSide(color: Colors.grey.shade200)),
-                      ),
-                      child: _CartPanel(cart: cart, onCheckout: ({promotionId, promoCode}) =>
-                          _proceedToPayment(promotionId: promotionId, promoCode: promoCode)),
+            ? const Center(child: CircularProgressIndicator())
+            : LayoutBuilder(
+                builder: (_, constraints) {
+                  final isWide = constraints.maxWidth >= 680;
+                  final catalog = productsAsync.when(
+                    loading: () =>
+                        const Center(child: CircularProgressIndicator()),
+                    error: (e, _) => Center(child: Text(loadError(e))),
+                    data: (data) => _ProductCatalog(
+                      products: data.products,
+                      categories: data.categories,
+                      selectedCategoryId: _selectedCategoryId,
+                      onCategorySelected: (id) =>
+                          setState(() => _selectedCategoryId = id),
+                      search: _search,
+                      onSearchChanged: (v) => setState(() => _search = v),
                     ),
-                  ]);
-                }
+                  );
 
-                return Stack(children: [
-                  catalog,
-                  if (cart.items.isNotEmpty)
-                    Positioned(
-                      bottom: 12,
-                      left: 16,
-                      right: 16,
-                      child: ElevatedButton.icon(
-                        onPressed: () => _showCartSheet(context),
-                        icon: const Icon(Icons.shopping_cart),
-                        label: Text(
-                            '${cart.totalItems} items · ${formatRM(cart.subtotal)}'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1E6FD9),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
+                  if (isWide) {
+                    return Row(
+                      children: [
+                        Expanded(flex: 3, child: catalog),
+                        Container(
+                          width: 300,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surface,
+                            border: Border(
+                              left: BorderSide(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                          ),
+                          child: _CartPanel(
+                            cart: cart,
+                            onCheckout: ({promotionId, promoCode}) =>
+                                _proceedToPayment(
+                                  promotionId: promotionId,
+                                  promoCode: promoCode,
+                                ),
+                          ),
                         ),
-                      ),
-                    ),
-                ]);
-              },
-            ),
+                      ],
+                    );
+                  }
+
+                  return Stack(
+                    children: [
+                      catalog,
+                      if (cart.items.isNotEmpty)
+                        Positioned(
+                          bottom: 12,
+                          left: 16,
+                          right: 16,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _showCartSheet(context),
+                            icon: const Icon(Icons.shopping_cart),
+                            label: Text(
+                              '${cart.totalItems} items · ${formatRM(cart.subtotal)}',
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1E6FD9),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
       ),
     );
   }
@@ -250,7 +437,8 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (_) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.75,
         // Watch the cart live: the sheet is a separate route, so a snapshot
@@ -309,12 +497,17 @@ class _ProductCatalogState extends ConsumerState<_ProductCatalog> {
   @override
   Widget build(BuildContext context) {
     final filtered = widget.products.where((p) {
-      final matchCat = widget.selectedCategoryId == null ||
+      final matchCat =
+          widget.selectedCategoryId == null ||
           p.categoryId == widget.selectedCategoryId;
-      final matchSearch = widget.search.isEmpty ||
+      final matchSearch =
+          widget.search.isEmpty ||
           p.name.toLowerCase().contains(widget.search.toLowerCase());
       return matchCat && matchSearch;
     }).toList();
+    if (widget.selectedCategoryId == null) {
+      filtered.sort((a, b) => naturalCompare(a.name, b.name));
+    }
 
     return Column(
       children: [
@@ -348,24 +541,30 @@ class _ProductCatalogState extends ConsumerState<_ProductCatalog> {
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
           child: DropdownButtonFormField<int?>(
-            value: widget.selectedCategoryId,
+            initialValue: widget.selectedCategoryId,
             isExpanded: true,
             decoration: InputDecoration(
               isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              prefixIcon:
-                  const Icon(Icons.filter_list_rounded, size: 18),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              prefixIcon: const Icon(Icons.filter_list_rounded, size: 18),
             ),
             items: [
               const DropdownMenuItem(
-                  value: null, child: Text('All Categories')),
-              ...widget.categories.map((c) => DropdownMenuItem(
-                    value: c.id as int,
-                    child: Text(c.name as String),
-                  )),
+                value: null,
+                child: Text('All Categories'),
+              ),
+              ...widget.categories.map(
+                (c) => DropdownMenuItem(
+                  value: c.id as int,
+                  child: Text(c.name as String),
+                ),
+              ),
             ],
             onChanged: widget.onCategorySelected,
           ),
@@ -392,7 +591,6 @@ class _ProductCatalogState extends ConsumerState<_ProductCatalog> {
   }
 }
 
-
 class _ProductTile extends ConsumerWidget {
   final Product product;
   const _ProductTile({required this.product});
@@ -400,8 +598,9 @@ class _ProductTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cart = ref.watch(cartProvider);
-    final cartItem =
-        cart.items.where((i) => i.productId == product.id).firstOrNull;
+    final cartItem = cart.items
+        .where((i) => i.productId == product.id)
+        .firstOrNull;
     final qty = cartItem?.quantity ?? 0;
     final inCart = cartItem != null;
 
@@ -427,8 +626,9 @@ class _ProductTile extends ConsumerWidget {
               TextField(
                 controller: ctrl,
                 autofocus: true,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: const InputDecoration(
                   labelText: 'Weight',
                   suffixText: 'kg',
@@ -442,19 +642,19 @@ class _ProductTile extends ConsumerWidget {
               TextButton(
                 onPressed: () {
                   Navigator.pop(ctx, false);
-                  ref
-                      .read(cartProvider.notifier)
-                      .updateQuantity(product.id, 0);
+                  ref.read(cartProvider.notifier).updateQuantity(product.id, 0);
                 },
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
                 child: const Text('Remove'),
               ),
             TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
             TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Confirm')),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Confirm'),
+            ),
           ],
         ),
       );
@@ -487,12 +687,15 @@ class _ProductTile extends ConsumerWidget {
                       child: product.imageUrl != null
                           ? ClipRRect(
                               borderRadius: BorderRadius.circular(6),
-                              child: Image.network(product.imageUrl!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => const Icon(
-                                      Icons.restaurant,
-                                      size: 36,
-                                      color: Colors.grey)),
+                              child: Image.network(
+                                product.imageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => const Icon(
+                                  Icons.restaurant,
+                                  size: 36,
+                                  color: Colors.grey,
+                                ),
+                              ),
                             )
                           : Icon(
                               product.soldByWeight
@@ -501,15 +704,20 @@ class _ProductTile extends ConsumerWidget {
                               size: 36,
                               color: product.soldByWeight
                                   ? Colors.teal
-                                  : Colors.grey),
+                                  : Colors.grey,
+                            ),
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(product.name,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 12),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis),
+                  Text(
+                    product.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   Row(
                     children: [
                       Text(
@@ -517,12 +725,13 @@ class _ProductTile extends ConsumerWidget {
                             ? '${formatRM(product.price)}/kg'
                             : formatRM(product.price),
                         style: const TextStyle(
-                            fontSize: 11, color: Color(0xFF1E6FD9)),
+                          fontSize: 11,
+                          color: Color(0xFF1E6FD9),
+                        ),
                       ),
                       if (product.soldByWeight) ...[
                         const SizedBox(width: 3),
-                        const Icon(Icons.scale,
-                            size: 10, color: Colors.teal),
+                        const Icon(Icons.scale, size: 10, color: Colors.teal),
                       ],
                     ],
                   ),
@@ -540,13 +749,15 @@ class _ProductTile extends ConsumerWidget {
                     shape: BoxShape.circle,
                   ),
                   child: product.soldByWeight
-                      ? const Icon(Icons.check,
-                          size: 11, color: Colors.white)
-                      : Text('$qty',
+                      ? const Icon(Icons.check, size: 11, color: Colors.white)
+                      : Text(
+                          '$qty',
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold)),
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
           ],
@@ -580,18 +791,28 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
     final cart = widget.cart;
     final canPromo = ref.watch(authProvider).user?.canManagePromotion ?? true;
     final promosAsync = canPromo ? ref.watch(activePromotionsProvider) : null;
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Column(
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          color: Colors.grey.shade100,
+          color: colorScheme.surfaceContainerHighest,
           child: Row(
             children: [
-              const Icon(Icons.shopping_cart_outlined, size: 18),
+              Icon(
+                Icons.shopping_cart_outlined,
+                size: 18,
+                color: colorScheme.onSurfaceVariant,
+              ),
               const SizedBox(width: 6),
-              Text('ORDER (${cart.totalItems})',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                'ORDER (${cart.totalItems})',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const Spacer(),
               if (cart.items.isNotEmpty)
                 TextButton(
@@ -608,12 +829,16 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
         ),
         Expanded(
           child: cart.items.isEmpty
-              ? const Center(
-                  child: Text('No items yet',
-                      style: TextStyle(color: Colors.grey)))
+              ? Center(
+                  child: Text(
+                    'No items yet',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                )
               : ListView.builder(
                   itemCount: cart.items.length,
-                  itemBuilder: (ctx, i) => _buildCartItem(context, ref, cart.items[i]),
+                  itemBuilder: (ctx, i) =>
+                      _buildCartItem(context, ref, cart.items[i]),
                 ),
         ),
         const Divider(height: 1),
@@ -626,10 +851,14 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Subtotal',
-                      style: TextStyle(fontWeight: FontWeight.w500)),
-                  Text(formatRM(cart.subtotal),
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const Text(
+                    'Subtotal',
+                    style: TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  Text(
+                    formatRM(cart.subtotal),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -639,8 +868,9 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                   loading: () => const LinearProgressIndicator(),
                   error: (_, _) => const SizedBox.shrink(),
                   data: (promos) {
-                    final listPromos =
-                        promos.where((p) => p.type != 'promo_code').toList();
+                    final listPromos = promos
+                        .where((p) => p.type != 'promo_code')
+                        .toList();
                     if (listPromos.isEmpty && _promoCodeCtrl.text.isEmpty) {
                       return _promoCodeField();
                     }
@@ -649,23 +879,31 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                       children: [
                         if (listPromos.isNotEmpty)
                           DropdownButtonFormField<Promotion?>(
-                            value: _selectedPromo,
+                            initialValue: _selectedPromo,
                             isExpanded: true,
                             decoration: const InputDecoration(
                               isDense: true,
                               border: OutlineInputBorder(),
                               labelText: 'Promotion',
                               contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 8),
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
                             ),
                             items: [
                               const DropdownMenuItem(
-                                  value: null, child: Text('None')),
-                              ...listPromos.map((p) => DropdownMenuItem(
-                                    value: p,
-                                    child: Text(p.name,
-                                        overflow: TextOverflow.ellipsis),
-                                  )),
+                                value: null,
+                                child: Text('None'),
+                              ),
+                              ...listPromos.map(
+                                (p) => DropdownMenuItem(
+                                  value: p,
+                                  child: Text(
+                                    p.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
                             ],
                             onChanged: (p) => setState(() {
                               _selectedPromo = p;
@@ -686,11 +924,11 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                   onPressed: cart.items.isEmpty
                       ? null
                       : () => widget.onCheckout(
-                            promotionId: _selectedPromo?.id,
-                            promoCode: _promoCodeCtrl.text.trim().isEmpty
-                                ? null
-                                : _promoCodeCtrl.text.trim(),
-                          ),
+                          promotionId: _selectedPromo?.id,
+                          promoCode: _promoCodeCtrl.text.trim().isEmpty
+                              ? null
+                              : _promoCodeCtrl.text.trim(),
+                        ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF10B981),
                     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -706,29 +944,27 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
   }
 
   Widget _promoCodeField() => TextField(
-        controller: _promoCodeCtrl,
-        decoration: const InputDecoration(
-          isDense: true,
-          border: OutlineInputBorder(),
-          labelText: 'Promo code (optional)',
-          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        ),
-        onChanged: (v) {
-          if (v.isNotEmpty && _selectedPromo != null) {
-            setState(() => _selectedPromo = null);
-          }
-        },
-      );
+    controller: _promoCodeCtrl,
+    decoration: const InputDecoration(
+      isDense: true,
+      border: OutlineInputBorder(),
+      labelText: 'Promo code (optional)',
+      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    ),
+    onChanged: (v) {
+      if (v.isNotEmpty && _selectedPromo != null) {
+        setState(() => _selectedPromo = null);
+      }
+    },
+  );
 
-  Widget _buildCartItem(
-      BuildContext context, WidgetRef ref, OrderItem item) {
+  Widget _buildCartItem(BuildContext context, WidgetRef ref, OrderItem item) {
     if (item.weight != null) {
       // Weight-based item
       return ListTile(
         dense: true,
         leading: const Icon(Icons.scale, size: 18, color: Colors.teal),
-        title: Text(item.productName,
-            style: const TextStyle(fontSize: 13)),
+        title: Text(item.productName, style: const TextStyle(fontSize: 13)),
         subtitle: Text(
           '${item.weight!.toStringAsFixed(3)} kg × ${formatRM(item.unitPrice)}/kg',
           style: const TextStyle(fontSize: 11),
@@ -736,9 +972,10 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(formatRM(item.subtotal),
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 13)),
+            Text(
+              formatRM(item.subtotal),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
             const SizedBox(width: 6),
             GestureDetector(
               onTap: () => ref
@@ -754,10 +991,11 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
     // Normal quantity-based item
     return ListTile(
       dense: true,
-      title: Text(item.productName,
-          style: const TextStyle(fontSize: 13)),
-      subtitle: Text(formatRM(item.unitPrice),
-          style: const TextStyle(fontSize: 11)),
+      title: Text(item.productName, style: const TextStyle(fontSize: 13)),
+      subtitle: Text(
+        formatRM(item.unitPrice),
+        style: const TextStyle(fontSize: 11),
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -769,8 +1007,10 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text('${item.quantity}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            child: Text(
+              '${item.quantity}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
           _QtyButton(
             icon: Icons.add,
@@ -790,16 +1030,19 @@ class _QtyButton extends StatelessWidget {
   const _QtyButton({required this.icon, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.grey.shade200,
-          ),
-          child: Icon(icon, size: 14),
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: colorScheme.surfaceContainerHighest,
         ),
-      );
+        child: Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+      ),
+    );
+  }
 }

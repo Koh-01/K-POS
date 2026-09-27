@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>K POS — {{ title }}</title>
+  <link rel="icon" type="image/png" href="/static/images/favicon.png">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>body{background:#f8fafc}main{max-width:760px}h2{font-size:1.15rem;margin-top:2rem}</style>
+</head>
+<body>
+<main class="container py-5">
+  <div class="d-flex align-items-center gap-3 mb-4">
+    <img src="/static/images/k_pos_logo.png" width="48" height="48" class="rounded-3" alt="K POS logo">
+    <div>
+      <h1 class="h3 fw-bold mb-0">{{ title }}</h1>
+      <div class="text-muted small">K POS · Last updated {{ updated }}</div>
+    </div>
+  </div>
+
+  {% if page == "privacy" %}
+  <p>K POS is a point-of-sale system for restaurants. This policy explains what
+  information K POS handles and how it is used.</p>
+
+  <h2>Information we store</h2>
+  <ul>
+    <li><strong>Account information</strong>: the name, email address or username,
+      and a hashed password for each Admin and Cashier account.</li>
+    <li><strong>Restaurant business data</strong> entered by the restaurant: products,
+      categories, tables, orders, payments, promotions, cash records, workers,
+      salaries and settings.</li>
+    <li><strong>Security logs</strong>: login times and results, used to protect accounts.</li>
+  </ul>
+  <p>Each restaurant's business data is kept in its own separate database and is
+  only accessible to that restaurant's accounts.</p>
+
+  <h2>Google Drive</h2>
+  <p>A restaurant Admin may choose to connect their own Google account so K POS can
+  save backups and monthly sales reports of that restaurant to their Google Drive.</p>
+  <ul>
+    <li>K POS requests only the <code>drive.file</code> permission. It can only create
+      and access the files and folder that K POS itself creates. It cannot see any
+      other files in the user's Drive.</li>
+    <li>K POS uses this access only to upload that restaurant's backups and reports
+      to a "K POS" folder in the user's Drive, and to remove the oldest K POS backup
+      if the Drive is full.</li>
+    <li>We store the Google account email address and an encrypted access token so
+      uploads can run automatically. We do not read, sell or share Google user data,
+      and we do not use it for advertising.</li>
+    <li>The Admin can disconnect at any time in Web Admin → Settings → Google Drive,
+      which deletes the stored token. Access can also be removed from the Google
+      Account permissions page. Files already saved to Drive remain the user's.</li>
+  </ul>
+  <p>K POS's use of information received from Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>,
+  including the Limited Use requirements.</p>
+
+  <h2>How information is used</h2>
+  <p>Information is used only to operate K POS for the restaurant: processing orders
+  and payments, producing receipts and reports, verifying email addresses, and
+  creating backups. We do not sell personal information.</p>
+
+  <h2>Retention and deletion</h2>
+  <p>Data is kept while the restaurant uses K POS. A restaurant Admin may request
+  deletion of their restaurant's data by contacting us.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: <a href="mailto:{{ contact }}">{{ contact }}</a></p>
+
+  {% else %}
+  <p>By using K POS you agree to these terms.</p>
+
+  <h2>The service</h2>
+  <p>K POS provides point-of-sale, reporting and backup features for restaurants.
+  Features may change over time.</p>
+
+  <h2>Accounts</h2>
+  <p>Restaurant Admins are responsible for their accounts, the Cashier accounts they
+  create, and keeping passwords confidential.</p>
+
+  <h2>Your data</h2>
+  <p>Business data entered into K POS belongs to the restaurant. The optional Google
+  Drive backup saves copies to the restaurant's own Google Drive; the restaurant is
+  responsible for that Google account. See the <a href="/privacy">Privacy Policy</a>.</p>
+
+  <h2>Acceptable use</h2>
+  <p>Do not use K POS for unlawful purposes or attempt to access another restaurant's data.</p>
+
+  <h2>Disclaimer</h2>
+  <p>K POS is provided "as is". To the extent permitted by law we are not liable for
+  indirect losses. Restaurants should keep their own records as required by law.</p>
+
+  <h2>Contact</h2>
+  <p><a href="mailto:{{ contact }}">{{ contact }}</a></p>
+  {% endif %}
+
+  <hr class="my-4">
+  <div class="small d-flex gap-3">
+    <a href="/web/login">K POS Sign In</a>
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/terms">Terms of Service</a>
+  </div>
+</main>
+</body>
+</html>

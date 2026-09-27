@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/currency_formatter.dart';
@@ -15,24 +15,25 @@ String _fmt(DateTime d) =>
   return switch (p) {
     _Period.today => (start: today, end: today),
     _Period.week => (
-        start: _fmt(now.subtract(Duration(days: now.weekday - 1))),
-        end: today,
-      ),
+      start: _fmt(now.subtract(Duration(days: now.weekday - 1))),
+      end: today,
+    ),
     _Period.month => (
-        start: _fmt(DateTime(now.year, now.month, 1)),
-        end: today,
-      ),
+      start: _fmt(DateTime(now.year, now.month, 1)),
+      end: today,
+    ),
   };
 }
 
-final _topProductsProvider =
-    FutureProvider.family.autoDispose<List<dynamic>, _Period>((ref, period) async {
-  final d = _datesFor(period);
-  final res = await ApiClient.instance
-      .get('/reports/top-products?start_date=${d.start}&end_date=${d.end}&limit=10');
-  final data = res.data as Map<String, dynamic>;
-  return (data['products'] as List<dynamic>?) ?? [];
-});
+final _topProductsProvider = FutureProvider.family
+    .autoDispose<List<dynamic>, _Period>((ref, period) async {
+      final d = _datesFor(period);
+      final res = await ApiClient.instance.get(
+        '/reports/top-products?start_date=${d.start}&end_date=${d.end}&limit=10',
+      );
+      final data = res.data as Map<String, dynamic>;
+      return (data['products'] as List<dynamic>?) ?? [];
+    });
 
 class TopProductsScreen extends ConsumerStatefulWidget {
   const TopProductsScreen({super.key});
@@ -85,8 +86,9 @@ class _TopProductsScreenState extends ConsumerState<TopProductsScreen> {
                   final p = products[i] as Map<String, dynamic>;
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor:
-                          const Color(0xFF1E6FD9).withValues(alpha: 0.1),
+                      backgroundColor: const Color(
+                        0xFF1E6FD9,
+                      ).withValues(alpha: 0.1),
                       child: Text(
                         '${i + 1}',
                         style: const TextStyle(
@@ -102,14 +104,17 @@ class _TopProductsScreenState extends ConsumerState<TopProductsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          formatRM(double.parse(
-                              (p['total_revenue'] ?? 0).toString())),
+                          formatRM(
+                            double.parse((p['total_revenue'] ?? 0).toString()),
+                          ),
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         Text(
                           '${p['total_qty'] ?? 0} sold',
                           style: TextStyle(
-                              fontSize: 12, color: Colors.grey.shade600),
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
                         ),
                       ],
                     ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_exception.dart';
 import '../../../core/db/local_db.dart';
@@ -17,10 +18,10 @@ class AuthState {
 
   bool get isAuthenticated => user != null;
   AuthState copyWith({User? user, bool? isLoading, String? error}) => AuthState(
-        user: user ?? this.user,
-        isLoading: isLoading ?? this.isLoading,
-        error: error,
-      );
+    user: user ?? this.user,
+    isLoading: isLoading ?? this.isLoading,
+    error: error,
+  );
 }
 
 class AuthNotifier extends StateNotifier<AuthState> {
@@ -55,6 +56,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state = const AuthState();
       return;
     }
+    // Always let /me validate the token while the server is reachable. If the
+    // device is offline, an otherwise valid cached session must remain usable
+    // even when the JWT's wall-clock expiry passed while the POS was offline.
+    // The next successful /me call still enforces expiry, disabled users and
+    // permission changes immediately.
     try {
       final res = await ApiClient.instance.get('/me');
       final user = User.fromJson(res.data as Map<String, dynamic>);
@@ -67,7 +73,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         await TokenStorage.delete();
         _clearUserSilently();
         state = const AuthState();
-      } else {
+      } else if (ApiException.isOfflineFailure(e)) {
         // Network unavailable — restore from local cache and stay logged in
         final cached = await _getCachedUserSilently();
         if (cached != null) {
@@ -78,6 +84,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
           await TokenStorage.delete();
           state = const AuthState();
         }
+      } else {
+        state = AuthState(error: friendlyError(e));
       }
     }
   }
@@ -93,10 +101,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
       await TokenStorage.save(token);
       final meRes = await ApiClient.instance.get('/me');
       final user = User.fromJson(meRes.data as Map<String, dynamic>);
+      final switchedRestaurant = await LocalDb.prepareForRestaurant(
+        user.restaurantId,
+      );
+      if (switchedRestaurant) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('cached_store_settings');
+      }
       _cacheUserSilently(user);
       state = AuthState(user: user);
       _startPermRefresh();
     } on Exception catch (e) {
+      if (e is StateError) {
+        await TokenStorage.delete();
+      }
       state = state.copyWith(isLoading: false, error: friendlyError(e));
     }
   }
@@ -114,8 +132,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = User.fromJson(res.data as Map<String, dynamic>);
       _cacheUserSilently(user);
       state = state.copyWith(user: user);
-    } catch (_) {
-      // keep existing state on network error
+    } catch (e) {
+      if (_isAuthError(e)) {
+        _stopPermRefresh();
+        await TokenStorage.delete();
+        _clearUserSilently();
+        state = const AuthState();
+      }
     }
   }
 

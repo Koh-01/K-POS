@@ -2,6 +2,9 @@ import 'package:dio/dio.dart';
 import '../../core/api/api_exception.dart';
 
 String friendlyError(Object e) {
+  if (e is StateError) {
+    return e.message.toString();
+  }
   if (e is ApiException) return e.message;
   if (e is DioException && e.error is ApiException) {
     return (e.error as ApiException).message;

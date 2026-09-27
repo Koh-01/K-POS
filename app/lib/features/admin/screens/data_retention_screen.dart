@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/error_utils.dart';
@@ -23,13 +23,15 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
       _preview = null;
     });
     try {
-      final res = await ApiClient.instance
-          .get('/admin/data-retention/preview?years=$_years');
+      final res = await ApiClient.instance.get(
+        '/admin/data-retention/preview?years=$_years',
+      );
       setState(() => _preview = res.data as Map<String, dynamic>);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -42,8 +44,9 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Confirm Cleanup'),
         content: Text(
-            'This will permanently delete records older than $_years year(s). '
-            'This cannot be undone.'),
+          'This will permanently delete records older than $_years year(s). '
+          'This cannot be undone.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -51,8 +54,9 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style:
-                TextButton.styleFrom(foregroundColor: const Color(0xFFEF4444)),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFEF4444),
+            ),
             child: const Text('Delete'),
           ),
         ],
@@ -62,22 +66,27 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
 
     setState(() => _cleaning = true);
     try {
-      final res = await ApiClient.instance
-          .post('/admin/data-retention/cleanup?years=$_years');
+      final res = await ApiClient.instance.post(
+        '/admin/data-retention/cleanup?years=$_years',
+      );
       final deleted =
-          (res.data as Map<String, dynamic>?)?['deleted'] as Map<String, dynamic>? ?? {};
+          (res.data as Map<String, dynamic>?)?['deleted']
+              as Map<String, dynamic>? ??
+          {};
       setState(() => _preview = null);
       if (mounted) {
         final summary = deleted.entries
             .map((e) => '${e.key}: ${e.value}')
             .join(', ');
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Deleted — $summary')));
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text('Deleted — $summary')));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _cleaning = false);
@@ -100,10 +109,11 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
                   const Text(
                     'RETENTION PERIOD',
                     style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                        letterSpacing: 0.8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                      letterSpacing: 0.8,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -112,10 +122,12 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
                       DropdownButton<int>(
                         value: _years,
                         items: [1, 2, 3, 5, 7]
-                            .map((y) => DropdownMenuItem(
-                                  value: y,
-                                  child: Text('$y year${y > 1 ? 's' : ''}'),
-                                ))
+                            .map(
+                              (y) => DropdownMenuItem(
+                                value: y,
+                                child: Text('$y year${y > 1 ? 's' : ''}'),
+                              ),
+                            )
                             .toList(),
                         onChanged: (v) {
                           if (v != null) {
@@ -137,8 +149,8 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
                           ? const SizedBox(
                               width: 16,
                               height: 16,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Text('Preview Deletions'),
                     ),
                   ),
@@ -157,20 +169,27 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
                     Text(
                       'RECORDS TO DELETE (before ${_preview!['cutoff_date']})',
                       style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                          letterSpacing: 0.8),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                        letterSpacing: 0.8,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _PreviewRow('Orders', _preview!['orders_to_delete']),
                     _PreviewRow('Payments', _preview!['payments_to_delete']),
                     _PreviewRow(
-                        'Cash Records', _preview!['cash_records_to_delete']),
+                      'Cash Records',
+                      _preview!['cash_records_to_delete'],
+                    ),
                     _PreviewRow(
-                        'Login Logs', _preview!['login_logs_to_delete']),
+                      'Login Logs',
+                      _preview!['login_logs_to_delete'],
+                    ),
                     _PreviewRow(
-                        'Audit Logs', _preview!['audit_logs_to_delete']),
+                      'Audit Logs',
+                      _preview!['audit_logs_to_delete'],
+                    ),
                     const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
@@ -185,7 +204,10 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
                                 width: 16,
                                 height: 16,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
                             : const Text('Run Cleanup'),
                       ),
                     ),

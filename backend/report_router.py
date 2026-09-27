@@ -5,12 +5,13 @@ from datetime import date, datetime, time
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import Numeric, case, cast, func
 
 from database import get_db
-from dependencies import get_current_user
+from dependencies import require_admin
 import models
 import schemas
+from time_utils import local_today
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -32,9 +33,9 @@ def _date_range(start_date: date, end_date: date):
 @router.get("/dashboard", response_model=schemas.DashboardResponse)
 def get_dashboard(
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
-    today = date.today()
+    today = local_today()
     start_dt = datetime.combine(today, time.min)
     end_dt = datetime.combine(today, time.max)
 
@@ -53,7 +54,10 @@ def get_dashboard(
     top_row = (
         db.query(
             models.Product.name,
-            func.sum(models.OrderItem.quantity).label("total_qty"),
+            func.sum(case(
+                (models.OrderItem.weight_kg.isnot(None), models.OrderItem.weight_kg),
+                else_=cast(models.OrderItem.quantity, Numeric(12, 3)),
+            )).label("total_qty"),
         )
         .select_from(models.Payment)
         .join(models.Order, models.Order.id == models.Payment.order_id)
@@ -65,7 +69,10 @@ def get_dashboard(
             models.Payment.created_at <= end_dt,
         )
         .group_by(models.Product.id, models.Product.name)
-        .order_by(func.sum(models.OrderItem.quantity).desc())
+        .order_by(func.sum(case(
+            (models.OrderItem.weight_kg.isnot(None), models.OrderItem.weight_kg),
+            else_=cast(models.OrderItem.quantity, Numeric(12, 3)),
+        )).desc())
         .first()
     )
 
@@ -143,7 +150,7 @@ def sales_report(
     start_date: date = Query(...),
     end_date: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     return _sales_query(start_date, end_date, db)
 
@@ -154,7 +161,7 @@ def sales_report(
 def annual_report(
     year: int = Query(..., ge=2000, le=2100),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     start_dt = datetime(year, 1, 1, 0, 0, 0)
     end_dt = datetime(year, 12, 31, 23, 59, 59)
@@ -204,7 +211,7 @@ def annual_report(
 @router.get("/sales/yearly")
 def yearly_sales_report(
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     rows = (
         db.query(
@@ -243,26 +250,32 @@ def _top_products_query(
 ) -> schemas.TopProductsResponse:
     start_dt, end_dt = _date_range(start_date, end_date)
 
+    sold_amount = case(
+        (models.OrderItem.weight_kg.isnot(None), models.OrderItem.weight_kg),
+        else_=cast(models.OrderItem.quantity, Numeric(12, 3)),
+    )
+    category_name = func.coalesce(models.Category.name, "Uncategorised")
+
     rows = (
         db.query(
             models.Product.id.label("product_id"),
             models.Product.name.label("product_name"),
-            models.Category.name.label("category_name"),
-            func.sum(models.OrderItem.quantity).label("total_qty"),
-            func.sum(models.OrderItem.unit_price * models.OrderItem.quantity).label("total_revenue"),
+            category_name.label("category_name"),
+            func.sum(sold_amount).label("total_qty"),
+            func.sum(models.OrderItem.unit_price * sold_amount).label("total_revenue"),
         )
         .select_from(models.Payment)
         .join(models.Order, models.Order.id == models.Payment.order_id)
         .join(models.OrderItem, models.OrderItem.order_id == models.Order.id)
         .join(models.Product, models.Product.id == models.OrderItem.product_id)
-        .join(models.Category, models.Category.id == models.Product.category_id)
+        .outerjoin(models.Category, models.Category.id == models.Product.category_id)
         .filter(
             models.Payment.status == "completed",
             models.Payment.created_at >= start_dt,
             models.Payment.created_at <= end_dt,
         )
-        .group_by(models.Product.id, models.Product.name, models.Category.name)
-        .order_by(func.sum(models.OrderItem.quantity).desc())
+        .group_by(models.Product.id, models.Product.name, category_name)
+        .order_by(func.sum(sold_amount).desc())
         .limit(limit)
         .all()
     )
@@ -291,7 +304,7 @@ def top_products(
     end_date: date = Query(...),
     limit: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     return _top_products_query(start_date, end_date, limit, db)
 
@@ -303,7 +316,7 @@ def export_sales_csv(
     start_date: date = Query(...),
     end_date: date = Query(...),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     report = _sales_query(start_date, end_date, db)
 
@@ -331,7 +344,7 @@ def export_products_csv(
     end_date: date = Query(...),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     report = _top_products_query(start_date, end_date, limit, db)
 
@@ -355,7 +368,7 @@ def export_products_csv(
 def export_annual_tax_csv(
     year: int = Query(..., ge=2000, le=2100),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     """
     All-in-one annual CSV for tax purposes.
