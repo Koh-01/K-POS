@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 
@@ -36,9 +37,10 @@ from drive_connections import DriveNotConnected
 from tenant_database import provision_restaurant_database, select_for_user, sync_user_shadow
 from web_router import router as web_router, WebLoginRequired
 from time_utils import APP_TIMEZONE, local_now
-from login_limiter import login_limiter
+from login_limiter import account_login_limiter, client_ip, login_keys, login_limiter
 from payment_cash_records import sync_payment_cash_records
 
+logger = logging.getLogger(__name__)
 _scheduler = BackgroundScheduler(timezone=APP_TIMEZONE)
 
 
@@ -365,7 +367,24 @@ async def lifespan(app: FastAPI):
         _scheduler.shutdown()
 
 
-app = FastAPI(title="POS System API", lifespan=lifespan)
+# Interactive API docs list every endpoint; keep them off in production.
+_api_docs = os.getenv("ENABLE_API_DOCS", "false").lower() == "true"
+app = FastAPI(
+    title="POS System API",
+    lifespan=lifespan,
+    docs_url="/docs" if _api_docs else None,
+    redoc_url="/redoc" if _api_docs else None,
+    openapi_url="/openapi.json" if _api_docs else None,
+)
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
 # Disabled by default. Local Flutter Web development can opt in with a
 # comma-separated allow-list, without opening production CORS globally.
@@ -431,11 +450,6 @@ def privacy_policy(request: Request):
 def terms_of_service(request: Request):
     return _legal_page(request, "terms", "Terms of Service")
 
-@app.get("/db-check")
-def db_check(db: Session = Depends(get_db)):
-    result = db.execute(text("SELECT 1"))
-    return {"database": "connected", "result": result.scalar()}
-
 # 注册第一个admin账号（仅用于系统初始化，之后这个接口应该关掉或加保护）
 @app.post("/setup/first-admin", response_model=schemas.UserResponse)
 def create_first_admin(
@@ -496,8 +510,8 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current
 
 @app.post("/login")
 def login(request: Request, credentials: schemas.LoginRequest, db: Session = Depends(get_db)):
-    client_key = request.client.host if request.client else "unknown"
-    if not login_limiter.allowed(client_key):
+    ip_key, account_key = login_keys(request, credentials.username)
+    if not (login_limiter.allowed(ip_key) and account_login_limiter.allowed(account_key)):
         raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in 15 minutes.")
     identifier = credentials.username.strip().lower()
     user = db.query(models.User).filter(or_(
@@ -515,21 +529,24 @@ def login(request: Request, credentials: schemas.LoginRequest, db: Session = Dep
         restaurant_id=user.restaurant_id if user else None,
         username=credentials.username,
         success=success,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
         user_agent=request.headers.get("user-agent"),
     ))
     db.commit()
 
     if password_matches and user.role == "admin" and user.email and not user.email_verified:
-        login_limiter.record_failure(client_key)
+        login_limiter.record_failure(ip_key)
+        account_login_limiter.record_failure(account_key)
         raise HTTPException(status_code=403, detail="Please verify your email before signing in")
     if not success:
-        login_limiter.record_failure(client_key)
+        login_limiter.record_failure(ip_key)
+        account_login_limiter.record_failure(account_key)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     select_for_user(db, user)
 
-    login_limiter.clear(client_key)
+    login_limiter.clear(ip_key)
+    account_login_limiter.clear(account_key)
     access_token = create_access_token(data={
         "sub": user.username,
         "uid": user.id,
@@ -571,8 +588,9 @@ def trigger_backup(
         return result
     except DriveNotConnected as e:
         raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Google Drive upload failed for restaurant %s", current_admin.restaurant_id)
+        raise HTTPException(status_code=500, detail="Upload to Google Drive failed. Please try again later.")
 
 
 @app.post("/admin/monthly-report", tags=["Admin"])
@@ -589,8 +607,9 @@ def trigger_monthly_report(
         return result
     except DriveNotConnected as e:
         raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Google Drive upload failed for restaurant %s", current_admin.restaurant_id)
+        raise HTTPException(status_code=500, detail="Upload to Google Drive failed. Please try again later.")
 
 
 @app.get("/admin/google-drive/status", tags=["Admin"])

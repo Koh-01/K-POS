@@ -29,7 +29,10 @@ from database import get_db
 from report_router import _sales_query, _top_products_query, _to_decimal
 from token_utils import create_access_token, decode_access_token
 from time_utils import local_now, local_today
-from login_limiter import login_limiter
+from login_limiter import (
+    account_login_limiter, client_ip, login_keys, login_limiter,
+    take_registration_slot, take_resend_slot,
+)
 from image_utils import load_upload_image
 from payment_cash_records import sync_payment_cash_records
 from auth_router import _send_verification_safely
@@ -142,8 +145,8 @@ async def post_login(
     db: Session = Depends(get_db),
 ):
     _enforce_same_origin(request)
-    client_key = request.client.host if request.client else "unknown"
-    if not login_limiter.allowed(client_key):
+    ip_key, account_key = login_keys(request, username)
+    if not (login_limiter.allowed(ip_key) and account_login_limiter.allowed(account_key)):
         return TEMPLATES.TemplateResponse(
             request,
             "login.html",
@@ -171,13 +174,14 @@ async def post_login(
         restaurant_id=user.restaurant_id if user else None,
         username=username,
         success=ok,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
         user_agent=request.headers.get("user-agent"),
     ))
     db.commit()
 
     if password_matches and user.email and not user.email_verified:
-        login_limiter.record_failure(client_key)
+        login_limiter.record_failure(ip_key)
+        account_login_limiter.record_failure(account_key)
         return TEMPLATES.TemplateResponse(
             request,
             "login.html",
@@ -186,14 +190,16 @@ async def post_login(
         )
 
     if not ok:
-        login_limiter.record_failure(client_key)
+        login_limiter.record_failure(ip_key)
+        account_login_limiter.record_failure(account_key)
         return TEMPLATES.TemplateResponse(
             request, "login.html",
             {"error": "Invalid credentials or not an admin account"},
             status_code=401,
         )
 
-    login_limiter.clear(client_key)
+    login_limiter.clear(ip_key)
+    account_login_limiter.clear(account_key)
     try:
         select_for_user(db, user)
     except HTTPException as exc:
@@ -242,6 +248,10 @@ async def post_register(
             "register.html",
             {"error": "Email verification is not configured. Contact the system operator."},
             status_code=503,
+        )
+    if not take_registration_slot(request):
+        return TEMPLATES.TemplateResponse(
+            request, "register.html", {"error": "Too many registration attempts. Please try again later."}, status_code=429,
         )
     try:
         data = schemas.AdminRegistrationRequest(
@@ -294,7 +304,7 @@ async def web_resend_verification(
         )
     try:
         data = schemas.ResendVerificationRequest(email=email)
-        result = resend_verification(db, data.email)
+        result = resend_verification(db, data.email) if take_resend_slot(request, data.email) else None
         if result:
             user, token = result
             background_tasks.add_task(
