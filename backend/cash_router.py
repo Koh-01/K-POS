@@ -15,6 +15,7 @@ from dependencies import get_current_user, require_permission
 import models
 import schemas
 from image_utils import load_upload_image
+from csv_utils import safe_csv_writer
 
 RECEIPT_DIR = Path(__file__).parent / "static" / "receipts"
 RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -219,7 +220,7 @@ def export_cash_csv(
     records = q.order_by(models.CashRecord.created_at).all()
 
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
     writer.writerow(["Date", "Type", "Amount (MYR)", "Description", "Reference"])
 
     total_in = Decimal("0")

@@ -1,6 +1,7 @@
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -46,13 +47,27 @@ def _validated_weight(product: models.Product, weight_kg):
 
 # ── Tables ────────────────────────────────────────────────────────────────────
 
+def attach_current_orders(db: Session, tables: list) -> list:
+    """Set `current_order_id` on each table to its open order (newest if several)."""
+    ids = [t.id for t in tables]
+    open_orders = dict(
+        db.query(models.Order.table_id, func.max(models.Order.id))
+        .filter(models.Order.status == "open", models.Order.table_id.in_(ids))
+        .group_by(models.Order.table_id)
+        .all()
+    ) if ids else {}
+    for table in tables:
+        table.current_order_id = open_orders.get(table.id)
+    return tables
+
+
 @router.get("/tables", response_model=list[schemas.TableResponse])
 def list_tables(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return (
+    return attach_current_orders(db, (
         db.query(models.Table)
         .order_by(models.Table.sort_order, models.Table.id)
         .all()
-    )
+    ))
 
 
 @router.post("/tables", response_model=schemas.TableResponse, status_code=201)

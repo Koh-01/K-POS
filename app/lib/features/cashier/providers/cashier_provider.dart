@@ -42,6 +42,24 @@ final openOrdersProvider = FutureProvider.autoDispose<List<Order>>((ref) async {
 
 // ── Tables ─────────────────────────────────────────────────────────────────
 
+/// Where an order is seated, for display: "Takeaway", the custom table
+/// label, or the table's real name — never the internal table id, which
+/// differs from the name in most restaurants.
+String orderPlaceLabel({
+  required String orderType,
+  String? tableName,
+  int? tableId,
+  List<RestaurantTable>? tables,
+}) {
+  if (orderType == OrderTypes.takeAway) return 'Takeaway';
+  if (tableName != null && tableName.isNotEmpty) return tableName;
+  if (tableId == null) return 'No table';
+  for (final table in tables ?? const <RestaurantTable>[]) {
+    if (table.id == tableId) return table.name;
+  }
+  return 'Dine in';
+}
+
 final tablesProvider = FutureProvider.autoDispose<List<RestaurantTable>>((
   ref,
 ) async {

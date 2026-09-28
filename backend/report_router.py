@@ -12,6 +12,7 @@ from dependencies import require_admin
 import models
 import schemas
 from time_utils import local_today
+from csv_utils import format_qty, safe_csv_writer
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -321,7 +322,7 @@ def export_sales_csv(
     report = _sales_query(start_date, end_date, db)
 
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
     writer.writerow(["Date", "Revenue (MYR)", "Orders"])
     for d in report.daily_breakdown:
         writer.writerow([d.date, str(d.revenue), d.orders])
@@ -349,10 +350,10 @@ def export_products_csv(
     report = _top_products_query(start_date, end_date, limit, db)
 
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
     writer.writerow(["Rank", "Product", "Category", "Qty Sold", "Revenue (MYR)"])
     for i, p in enumerate(report.products, 1):
-        writer.writerow([i, p.product_name, p.category_name, p.total_qty, str(p.total_revenue)])
+        writer.writerow([i, p.product_name, p.category_name, format_qty(p.total_qty), str(p.total_revenue)])
 
     filename = f"products_{start_date}_{end_date}.csv"
     return Response(
@@ -380,12 +381,12 @@ def export_annual_tax_csv(
     end_date = date(year, 12, 31)
 
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
 
     # ── Section 1: Daily Sales ────────────────────────────────────────────────
     writer.writerow([f"Annual Tax Report — {year}"])
     writer.writerow([])
-    writer.writerow(["=== DAILY SALES ==="])
+    writer.writerow(["DAILY SALES"])
 
     sales = _sales_query(start_date, end_date, db)
     writer.writerow(["Date", "Revenue (MYR)", "Orders"])
@@ -395,15 +396,15 @@ def export_annual_tax_csv(
     writer.writerow([])
 
     # ── Section 2: Product Sales ──────────────────────────────────────────────
-    writer.writerow(["=== PRODUCT SALES ==="])
+    writer.writerow(["PRODUCT SALES"])
     products = _top_products_query(start_date, end_date, 500, db)
     writer.writerow(["Rank", "Product", "Category", "Qty Sold", "Revenue (MYR)"])
     for i, p in enumerate(products.products, 1):
-        writer.writerow([i, p.product_name, p.category_name, p.total_qty, str(p.total_revenue)])
+        writer.writerow([i, p.product_name, p.category_name, format_qty(p.total_qty), str(p.total_revenue)])
     writer.writerow([])
 
     # ── Section 3: Cash In / Out ──────────────────────────────────────────────
-    writer.writerow(["=== CASH IN / OUT ==="])
+    writer.writerow(["CASH IN / OUT"])
     start_dt = datetime.combine(start_date, time.min)
     end_dt = datetime.combine(end_date, time.max)
     cash_records = (

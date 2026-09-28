@@ -20,6 +20,7 @@ from database import SessionLocal, select_restaurant_database
 from drive_connections import DriveNotConnected, upload_for_restaurant
 from gdrive_backup import _upload
 from tenant_backup import BACKUP_PREFIX
+from csv_utils import format_qty, safe_csv_writer
 
 TWO = Decimal("0.01")
 
@@ -38,14 +39,14 @@ def _build_csv(year: int, month: int, db: Session) -> str:
         end_dt = datetime(year, month + 1, 1, 0, 0, 0)
 
     output = io.StringIO()
-    w = csv.writer(output)
+    w = safe_csv_writer(output)
 
     month_label = f"{year}-{month:02d}"
 
     # ── Section 1: Daily Sales ────────────────────────────────────────────────
     w.writerow([f"Monthly Sales Report — {month_label}"])
     w.writerow([])
-    w.writerow(["=== DAILY SALES ==="])
+    w.writerow(["DAILY SALES"])
     w.writerow(["Date", "Revenue (MYR)", "Orders"])
 
     daily_rows = (
@@ -76,7 +77,7 @@ def _build_csv(year: int, month: int, db: Session) -> str:
     w.writerow([])
 
     # ── Section 2: Top Products ───────────────────────────────────────────────
-    w.writerow(["=== PRODUCT SALES ==="])
+    w.writerow(["PRODUCT SALES"])
     w.writerow(["Rank", "Product", "Category", "Qty Sold", "Revenue (MYR)"])
 
     sold_amount = case(
@@ -107,12 +108,12 @@ def _build_csv(year: int, month: int, db: Session) -> str:
     )
 
     for i, row in enumerate(product_rows, 1):
-        w.writerow([i, row.product_name, row.category_name, row.total_qty, str(_to_dec(row.total_revenue))])
+        w.writerow([i, row.product_name, row.category_name, format_qty(row.total_qty), str(_to_dec(row.total_revenue))])
 
     w.writerow([])
 
     # ── Section 3: Cash In / Out ──────────────────────────────────────────────
-    w.writerow(["=== CASH IN / OUT ==="])
+    w.writerow(["CASH IN / OUT"])
     w.writerow(["Date", "Type", "Amount (MYR)", "Description", "Reference"])
 
     cash_rows = (

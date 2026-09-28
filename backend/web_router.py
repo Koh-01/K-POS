@@ -41,6 +41,7 @@ from registration_service import register_admin, resend_verification, verify_ema
 from tenant_database import select_for_user, sync_user_shadow
 import drive_connections
 import schemas
+from csv_utils import format_qty, safe_csv_writer
 
 TEMPLATES = Jinja2Templates(env=Environment(
     loader=FileSystemLoader(str(Path(__file__).parent / "templates")),
@@ -808,7 +809,7 @@ async def export_cash_records(
         .all()
     )
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
     writer.writerow(["Date", "Type", "Amount (RM)", "Description", "Category", "Reference"])
     for record in records:
         writer.writerow([
@@ -1530,12 +1531,12 @@ def web_annual_csv_export(
     start_date = date(year, 1, 1)
     end_date = date(year, 12, 31)
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = safe_csv_writer(output)
 
     # Section 1: Daily Sales
     writer.writerow([f"Annual Tax Report — {year}"])
     writer.writerow([])
-    writer.writerow(["=== DAILY SALES ==="])
+    writer.writerow(["DAILY SALES"])
     sales = _sales_query(start_date, end_date, db)
     writer.writerow(["Date", "Revenue (MYR)", "Orders"])
     for d in sales.daily_breakdown:
@@ -1544,15 +1545,15 @@ def web_annual_csv_export(
     writer.writerow([])
 
     # Section 2: Product Sales
-    writer.writerow(["=== PRODUCT SALES ==="])
+    writer.writerow(["PRODUCT SALES"])
     products = _top_products_query(start_date, end_date, 500, db)
     writer.writerow(["Rank", "Product", "Category", "Qty Sold", "Revenue (MYR)"])
     for i, p in enumerate(products.products, 1):
-        writer.writerow([i, p.product_name, p.category_name, p.total_qty, str(p.total_revenue)])
+        writer.writerow([i, p.product_name, p.category_name, format_qty(p.total_qty), str(p.total_revenue)])
     writer.writerow([])
 
     # Section 3: Cash In / Out
-    writer.writerow(["=== CASH IN / OUT ==="])
+    writer.writerow(["CASH IN / OUT"])
     start_dt = datetime.combine(start_date, time.min)
     end_dt = datetime.combine(end_date, time.max)
     cash_records = (

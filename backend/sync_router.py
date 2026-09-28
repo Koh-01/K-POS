@@ -7,7 +7,7 @@ from database import get_db
 from dependencies import get_current_user
 import models
 import schemas
-from order_router import _generate_order_number, _validated_weight
+from order_router import _generate_order_number, _validated_weight, attach_current_orders
 from payment_router import _calc, _release_table_if_unused
 from promotion_router import _check_active, compute_discount
 from settings_router import _get_settings
@@ -52,7 +52,7 @@ def get_catalog(db: Session = Depends(get_db), _=Depends(get_current_user)):
         "synced_at": local_now().isoformat(),
         "categories": [schemas.CategoryResponse.model_validate(c) for c in categories],
         "products": [schemas.ProductResponse.model_validate(p) for p in products],
-        "tables": [schemas.TableResponse.model_validate(t) for t in tables],
+        "tables": [schemas.TableResponse.model_validate(t) for t in attach_current_orders(db, tables)],
     }
 
 

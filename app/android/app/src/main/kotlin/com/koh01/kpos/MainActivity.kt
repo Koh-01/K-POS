@@ -1,4 +1,4 @@
-package com.restaurant.pos_app
+package com.koh01.kpos
 
 import io.flutter.embedding.android.FlutterActivity
 

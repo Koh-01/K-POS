@@ -203,6 +203,8 @@ class TableResponse(BaseModel):
     name: str
     capacity: int
     status: str
+    # The open order seated at this table, so the app can reopen it.
+    current_order_id: int | None = None
     sort_order: int
     is_active: bool
     created_at: datetime

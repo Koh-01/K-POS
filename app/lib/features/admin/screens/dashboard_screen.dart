@@ -66,7 +66,7 @@ class DashboardScreen extends ConsumerWidget {
                   Expanded(
                     child: _StatCard(
                       label: 'Top Product',
-                      value: data['top_product'] as String? ?? '—',
+                      value: data['top_product_today'] as String? ?? '—',
                       icon: Icons.star,
                       color: const Color(0xFFF59E0B),
                     ),

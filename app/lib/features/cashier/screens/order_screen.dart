@@ -299,9 +299,13 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       _scheduleAutoSave();
     });
 
-    final title = cart.orderType == OrderTypes.takeAway
-        ? 'Takeaway'
-        : (cart.tableName ?? 'New Order');
+    final place = orderPlaceLabel(
+      orderType: cart.orderType,
+      tableName: cart.tableName,
+      tableId: cart.tableId,
+      tables: ref.watch(tablesProvider).valueOrNull,
+    );
+    final title = place == 'No table' ? 'New Order' : place;
 
     return PopScope(
       canPop: false,

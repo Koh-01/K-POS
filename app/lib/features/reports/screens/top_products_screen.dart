@@ -110,7 +110,7 @@ class _TopProductsScreenState extends ConsumerState<TopProductsScreen> {
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          '${p['total_qty'] ?? 0} sold',
+                          '${formatQty(p['total_qty'])} sold',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey.shade600,

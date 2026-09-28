@@ -8,7 +8,7 @@
 PRODUCT_NAME = K POS
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.restaurant.posApp
+PRODUCT_BUNDLE_IDENTIFIER = com.koh01.kpos
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.restaurant. All rights reserved.

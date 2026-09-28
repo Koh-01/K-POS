@@ -320,13 +320,21 @@ class _OrderCard extends ConsumerWidget {
   final Order order;
   const _OrderCard({required this.order});
 
+  String _label(WidgetRef ref, {bool watch = true}) => orderPlaceLabel(
+    orderType: order.orderType,
+    tableName: order.tableName,
+    tableId: order.tableId,
+    tables: (watch ? ref.watch(tablesProvider) : ref.read(tablesProvider))
+        .valueOrNull,
+  );
+
   Future<void> _confirmCancel(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel Order?'),
         content: Text(
-          'Cancel order for ${order.orderType == OrderTypes.takeAway ? 'Takeaway' : (order.tableName ?? 'Table ${order.tableId}')}? This cannot be undone.',
+          'Cancel order for ${_label(ref, watch: false)}? This cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -361,9 +369,7 @@ class _OrderCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isTakeaway = order.orderType == OrderTypes.takeAway;
-    final label = isTakeaway
-        ? 'Takeaway'
-        : (order.tableName ?? 'Table ${order.tableId}');
+    final label = _label(ref);
     final itemCount = order.items.length;
     final accentColor = isTakeaway ? const Color(0xFFE07A3A) : AppTheme.info;
 

@@ -232,7 +232,21 @@ class _TableCard extends ConsumerWidget {
     return GestureDetector(
       onTap: () {
         if (occupied) {
-          context.push('/cashier/order/${table.currentOrderId}');
+          final orderId = table.currentOrderId;
+          if (orderId == null) {
+            // Never fall through to a blank order: that would seat a second,
+            // table-less order instead of adding to the existing one.
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Loading ${table.name}\'s order, please try again.',
+                ),
+              ),
+            );
+            onRefresh();
+            return;
+          }
+          context.push('/cashier/order/$orderId');
         } else {
           ref.read(cartProvider.notifier)
             ..clear()
