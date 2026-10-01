@@ -2,7 +2,7 @@ name: pos_app
 description: "K POS - Restaurant Point of Sale System"
 publish_to: 'none'
 
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: ^3.11.5
@@ -62,6 +62,10 @@ dependencies:
 dependency_overrides:
   printing:
     path: packages/printing
+  # Patched copy: reliable reconnects, reported write errors, correct image
+  # height encoding, no location permission. See packages/blue_thermal_printer.
+  blue_thermal_printer:
+    path: packages/blue_thermal_printer
 
 dev_dependencies:
   flutter_test:

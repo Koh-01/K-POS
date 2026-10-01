@@ -30,6 +30,7 @@ import 'features/admin/screens/login_logs_screen.dart';
 import 'features/admin/screens/data_retention_screen.dart';
 import 'features/admin/screens/admin_tools_screen.dart';
 import 'features/salary/screens/salary_screen.dart';
+import 'features/payments/services/receipt_printer.dart';
 import 'shared/theme/app_theme.dart';
 
 final _themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.light);
@@ -45,7 +46,7 @@ class PosApp extends ConsumerStatefulWidget {
   ConsumerState<PosApp> createState() => _PosAppState();
 }
 
-class _PosAppState extends ConsumerState<PosApp> {
+class _PosAppState extends ConsumerState<PosApp> with WidgetsBindingObserver {
   late final GoRouter _router;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   bool _wasOffline = false;
@@ -55,18 +56,22 @@ class _PosAppState extends ConsumerState<PosApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadTheme();
     _listenConnectivity();
+    // Reconnect the saved receipt printer in the background so the first
+    // print of the day doesn't wait on (or fail at) a Bluetooth handshake.
+    unawaited(ReceiptPrinter.autoConnect());
     // The WiFi interface can stay "connected" the whole time even when the
     // backend itself (reached over the internet via Cloudflare Tunnel, not
     // a local server) is unreachable — e.g. the router's WAN is down. That
     // means the offline→online transition connectivity_plus reports may
     // never fire, so pending orders/payments would sit queued forever.
     // Retry periodically as a backstop regardless of what the OS reports.
-    _syncRetryTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => _runBackgroundSync(),
-    );
+    _syncRetryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _runBackgroundSync();
+      unawaited(ReceiptPrinter.autoConnect());
+    });
     _router = GoRouter(
       initialLocation: '/login',
       refreshListenable: ref.read(_routerNotifierProvider),
@@ -270,7 +275,15 @@ class _PosAppState extends ConsumerState<PosApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ReceiptPrinter.autoConnect());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectivitySub?.cancel();
     _syncRetryTimer?.cancel();
     super.dispose();

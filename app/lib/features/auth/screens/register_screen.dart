@@ -39,12 +39,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
-      await ApiClient.instance.post('/auth/register', data: {
-        'restaurant_name': _restaurant.text.trim(),
-        'full_name': _name.text.trim(),
-        'email': _email.text.trim(),
-        'password': _password.text,
-      });
+      await ApiClient.instance.post(
+        '/auth/register',
+        data: {
+          'restaurant_name': _restaurant.text.trim(),
+          'full_name': _name.text.trim(),
+          'email': _email.text.trim(),
+          'password': _password.text,
+        },
+      );
       if (mounted) setState(() => _sent = true);
     } catch (e) {
       if (mounted) setState(() => _error = friendlyError(e));
@@ -78,13 +81,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _success() => Column(
     mainAxisSize: MainAxisSize.min,
     children: [
-      const Icon(Icons.mark_email_read_outlined, size: 64, color: AppTheme.primaryBlue),
+      const Icon(
+        Icons.mark_email_read_outlined,
+        size: 64,
+        color: AppTheme.primaryBlue,
+      ),
       const SizedBox(height: 18),
-      const Text('Check your email', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+      const Text(
+        'Check your email',
+        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+      ),
       const SizedBox(height: 10),
-      Text('We sent a verification link to ${_email.text.trim()}. Open it before signing in.', textAlign: TextAlign.center),
+      Text(
+        'We sent a verification link to ${_email.text.trim()}. Open it before signing in.',
+        textAlign: TextAlign.center,
+      ),
       const SizedBox(height: 24),
-      ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('Back to Sign In')),
+      ElevatedButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Back to Sign In'),
+      ),
     ],
   );
 
@@ -95,7 +111,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       children: [
         const Center(child: KtsLogo(size: 70)),
         const SizedBox(height: 18),
-        const Text('Set up your restaurant', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+        const Text(
+          'Set up your restaurant',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+        ),
         const SizedBox(height: 24),
         _field(_restaurant, 'Restaurant name', Icons.storefront_outlined),
         const SizedBox(height: 12),
@@ -108,18 +128,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
         TextFormField(
           controller: _confirm,
           obscureText: true,
-          decoration: const InputDecoration(labelText: 'Confirm password', prefixIcon: Icon(Icons.lock_outline)),
-          validator: (value) => value != _password.text ? 'Passwords do not match' : null,
+          decoration: const InputDecoration(
+            labelText: 'Confirm password',
+            prefixIcon: Icon(Icons.lock_outline),
+          ),
+          validator: (value) =>
+              value != _password.text ? 'Passwords do not match' : null,
         ),
         if (_error != null) ...[
           const SizedBox(height: 14),
-          Text(_error!, style: const TextStyle(color: AppTheme.danger), textAlign: TextAlign.center),
+          Text(
+            _error!,
+            style: const TextStyle(color: AppTheme.danger),
+            textAlign: TextAlign.center,
+          ),
         ],
         const SizedBox(height: 22),
         ElevatedButton(
           onPressed: _loading ? null : _submit,
           child: _loading
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
               : const Text('Create Account'),
         ),
       ],
@@ -142,7 +177,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final text = value?.trim() ?? '';
       if (text.isEmpty) return 'Required';
       if (password && text.length < 8) return 'Use at least 8 characters';
-      if (email && (!text.contains('@') || !text.split('@').last.contains('.'))) return 'Enter a valid email';
+      if (email &&
+          (!text.contains('@') || !text.split('@').last.contains('.'))) {
+        return 'Enter a valid email';
+      }
       return null;
     },
   );

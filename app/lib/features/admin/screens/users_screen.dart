@@ -44,91 +44,195 @@ class UsersScreen extends ConsumerWidget {
   }
 
   Future<void> _showAddDialog(BuildContext context, WidgetRef ref) async {
-    final usernameCtrl = TextEditingController();
-    final nameCtrl = TextEditingController();
-    final passwordCtrl = TextEditingController();
-    final confirmed = await showDialog<bool>(
+    final created = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-          title: const Text('Add Cashier'),
-          content: SingleChildScrollView(
+      barrierDismissible: false,
+      builder: (_) => const _AddCashierDialog(),
+    );
+    if (created != true) return;
+    ref.invalidate(_usersProvider);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('User created successfully')),
+        );
+    }
+  }
+}
+
+/// Validates each field in place and stays open until the cashier is
+/// created, so a short password or a taken username never throws away what
+/// the Admin already typed.
+class _AddCashierDialog extends StatefulWidget {
+  const _AddCashierDialog();
+
+  @override
+  State<_AddCashierDialog> createState() => _AddCashierDialogState();
+}
+
+class _AddCashierDialogState extends State<_AddCashierDialog> {
+  static const _minPasswordLength = 8;
+
+  final _formKey = GlobalKey<FormState>();
+  final _username = TextEditingController();
+  final _fullName = TextEditingController();
+  final _password = TextEditingController();
+  bool _saving = false;
+  bool _showPassword = false;
+  String? _usernameError;
+  String? _serverError;
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _fullName.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _usernameError = null;
+      _serverError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      await ApiClient.instance.post(
+        '/users',
+        data: {
+          'username': _username.text.trim(),
+          'full_name': _fullName.text.trim(),
+          'password': _password.text,
+          'role': 'cashier',
+        },
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      final message = friendlyError(e);
+      if (!mounted) return;
+      setState(() {
+        if (message.toLowerCase().contains('username')) {
+          _usernameError = 'This username is already taken. Try another one.';
+        } else {
+          _serverError = message;
+        }
+      });
+      _formKey.currentState!.validate();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add Cashier'),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: usernameCtrl,
-                  decoration: const InputDecoration(labelText: 'Username'),
+                TextFormField(
+                  controller: _username,
+                  enabled: !_saving,
+                  decoration: InputDecoration(
+                    labelText: 'Username',
+                    helperText: 'Used to sign in on the POS',
+                    errorMaxLines: 2,
+                    errorText: _usernameError,
+                  ),
                   textInputAction: TextInputAction.next,
+                  onChanged: (_) {
+                    if (_usernameError != null) {
+                      setState(() => _usernameError = null);
+                    }
+                  },
+                  validator: (value) =>
+                      (value ?? '').trim().isEmpty ? 'Enter a username' : null,
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: 'Full Name'),
+                TextFormField(
+                  controller: _fullName,
+                  enabled: !_saving,
+                  decoration: const InputDecoration(
+                    labelText: 'Full Name',
+                    errorMaxLines: 2,
+                  ),
                   textCapitalization: TextCapitalization.words,
                   textInputAction: TextInputAction.next,
+                  validator: (value) => (value ?? '').trim().isEmpty
+                      ? 'Enter the cashier\'s name'
+                      : null,
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: passwordCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
+                TextFormField(
+                  controller: _password,
+                  enabled: !_saving,
+                  obscureText: !_showPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    helperText: 'At least $_minPasswordLength characters',
+                    errorMaxLines: 2,
+                    suffixIcon: IconButton(
+                      tooltip: _showPassword
+                          ? 'Hide password'
+                          : 'Show password',
+                      icon: Icon(
+                        _showPassword ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setState(() => _showPassword = !_showPassword),
+                    ),
+                  ),
                   textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _saving ? null : _submit(),
+                  validator: (value) {
+                    final length = (value ?? '').length;
+                    if (length == 0) return 'Enter a password';
+                    if (length < _minPasswordLength) {
+                      return 'Password needs at least $_minPasswordLength characters '
+                          '(${_minPasswordLength - length} more)';
+                    }
+                    return null;
+                  },
                 ),
+                if (_serverError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _serverError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Create'),
-            ),
-          ],
+        ),
       ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _submit,
+          child: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Create'),
+        ),
+      ],
     );
-
-    if (confirmed == true) {
-      if (usernameCtrl.text.trim().isEmpty ||
-          nameCtrl.text.trim().isEmpty ||
-          passwordCtrl.text.length < 8) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(
-              const SnackBar(content: Text('All fields are required')),
-            );
-        }
-        return;
-      }
-      try {
-        await ApiClient.instance.post(
-          '/users',
-          data: {
-            'username': usernameCtrl.text.trim(),
-            'full_name': nameCtrl.text.trim(),
-            'password': passwordCtrl.text,
-            'role': 'cashier',
-          },
-        );
-        ref.invalidate(_usersProvider);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(
-              const SnackBar(content: Text('User created successfully')),
-            );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
-        }
-      }
-    }
   }
 }
 

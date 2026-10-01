@@ -9,6 +9,7 @@ import '../../auth/providers/auth_provider.dart';
 import '../../../app.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/constants/api_constants.dart';
+import '../../../core/models/store_settings.dart';
 import '../../payments/services/receipt_printer.dart';
 import 'package:blue_thermal_printer/blue_thermal_printer.dart';
 
@@ -51,6 +52,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _printerConnected = false;
   bool _testingPrinter = false;
   String? _connectingAddress;
+  int _paperWidthMm = 58;
 
   String? _qrImagePath;
   bool _uploadingQr = false;
@@ -72,32 +74,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _loadPrefs();
     // Refresh user from server so permission changes take effect without re-login
     ref.read(authProvider.notifier).refreshUser();
-    final settingsAsync = ref.read(settingsMutableProvider);
-    settingsAsync.whenData((s) {
-      _storeNameCtrl.text = s.storeName;
-      _storeAddressCtrl.text = s.storeAddress ?? '';
-      _storePhoneCtrl.text = s.storePhone ?? '';
-      _storeEmailCtrl.text = s.storeEmail ?? '';
-      _storeSsmCtrl.text = s.storeSsmNumber ?? '';
-      _taxRegCtrl.text = s.taxRegistrationNumber ?? '';
-      _sstRateCtrl.text = (s.sstRate * 100).toStringAsFixed(1);
-      _serviceRateCtrl.text = (s.serviceChargeRate * 100).toStringAsFixed(1);
-      _enableSst = s.enableSst;
-      _enableServiceCharge = s.enableServiceCharge;
-      _paymentToCashRecord = s.paymentToCashRecord;
-      _requireSalarySignature = s.requireSalarySignature;
-      _qrImagePath = s.duitnowQrImageUrl;
-      _logoPath = s.storeLogoPath;
-      _receiptHeaderCtrl.text = s.receiptHeader;
-      _receiptHeaderSize = s.receiptHeaderSize;
-      _receiptHeaderAlign = s.receiptHeaderAlign;
-      _receiptFooterCtrl.text = s.receiptFooter;
-      _receiptFooterSize = s.receiptFooterSize;
-      _receiptFooterAlign = s.receiptFooterAlign;
-      _receiptShowLogo = s.receiptShowLogo;
-      _settingsLoaded = true;
-      if (mounted) setState(() {});
-    });
+    // Populate once the server settings arrive. Reading them only once here
+    // left every field blank (and auto-save disabled) whenever the screen
+    // opened before the settings had finished loading.
+    ref.listenManual<AsyncValue<StoreSettings>>(settingsMutableProvider, (
+      _,
+      next,
+    ) {
+      if (_settingsLoaded) return;
+      next.whenData(_populateSettings);
+    }, fireImmediately: true);
     for (final c in [
       _storeNameCtrl,
       _storeAddressCtrl,
@@ -115,6 +101,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  void _populateSettings(StoreSettings s) {
+    _storeNameCtrl.text = s.storeName;
+    _storeAddressCtrl.text = s.storeAddress ?? '';
+    _storePhoneCtrl.text = s.storePhone ?? '';
+    _storeEmailCtrl.text = s.storeEmail ?? '';
+    _storeSsmCtrl.text = s.storeSsmNumber ?? '';
+    _taxRegCtrl.text = s.taxRegistrationNumber ?? '';
+    _sstRateCtrl.text = (s.sstRate * 100).toStringAsFixed(1);
+    _serviceRateCtrl.text = (s.serviceChargeRate * 100).toStringAsFixed(1);
+    _enableSst = s.enableSst;
+    _enableServiceCharge = s.enableServiceCharge;
+    _paymentToCashRecord = s.paymentToCashRecord;
+    _requireSalarySignature = s.requireSalarySignature;
+    _qrImagePath = s.duitnowQrImageUrl;
+    _logoPath = s.storeLogoPath;
+    _receiptHeaderCtrl.text = s.receiptHeader;
+    _receiptHeaderSize = s.receiptHeaderSize;
+    _receiptHeaderAlign = s.receiptHeaderAlign;
+    _receiptFooterCtrl.text = s.receiptFooter;
+    _receiptFooterSize = s.receiptFooterSize;
+    _receiptFooterAlign = s.receiptFooterAlign;
+    _receiptShowLogo = s.receiptShowLogo;
+    _settingsLoaded = true;
+    if (mounted) setState(() {});
+  }
+
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
@@ -122,6 +134,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _darkMode = prefs.getBool('dark_mode') ?? false;
       _baseUrlCtrl.text = prefs.getString('base_url') ?? '';
       _connectedAddress = prefs.getString('printer_address');
+      _paperWidthMm = prefs.getInt('printer_paper_mm') == 80 ? 80 : 58;
       _prefsLoaded = true;
     });
     await _refreshPrinterConnection();
@@ -357,7 +370,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!connected) {
         throw StateError('Printer did not report a connected state.');
       }
-      await ReceiptPrinter.savePrinterAddress(address);
+      await ReceiptPrinter.savePrinterAddress(address, name: device.name);
       if (!mounted) return;
       setState(() {
         _connectedAddress = device.address;
@@ -474,6 +487,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ],
+      ),
+      const SizedBox(height: 12),
+      Text(
+        'Receipt paper width',
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      const SizedBox(height: 6),
+      SegmentedButton<int>(
+        segments: const [
+          ButtonSegment(value: 58, label: Text('58 mm')),
+          ButtonSegment(value: 80, label: Text('80 mm')),
+        ],
+        selected: {_paperWidthMm},
+        onSelectionChanged: (selection) async {
+          final mm = selection.first;
+          await ReceiptPrinter.setPaperWidthMm(mm);
+          if (mounted) setState(() => _paperWidthMm = mm);
+        },
+      ),
+      const SizedBox(height: 4),
+      Text(
+        'Match the roll in your printer. Most small portable printers use 58 mm.',
+        style: TextStyle(
+          fontSize: 12,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
       ..._devices.map(
         (d) => ListTile(

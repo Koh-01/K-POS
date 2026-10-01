@@ -10,6 +10,7 @@ import '../../../core/models/product.dart';
 import '../../../core/models/order_item.dart';
 import '../../../core/models/order.dart';
 import '../../../core/models/promotion.dart';
+import '../../../core/models/restaurant_table.dart';
 import '../../../features/payments/providers/payment_provider.dart';
 import '../../../features/payments/screens/payment_screen.dart';
 import '../../../features/payments/services/receipt_printer.dart';
@@ -197,6 +198,12 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       await ReceiptPrinter.printBill(
         order: order,
         summary: summary,
+        placeLabel: orderPlaceLabel(
+          orderType: order.orderType,
+          tableName: order.tableName,
+          tableId: order.tableId,
+          tables: ref.read(tablesProvider).valueOrNull,
+        ),
         storeName: settings.storeName,
         storeAddress: settings.storeAddress,
         storePhone: settings.storePhone,
@@ -283,6 +290,96 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
     }
   }
 
+  /// Saves the cart and returns the order as the server now has it (fresh
+  /// item ids — every save recreates the lines). Null when offline.
+  Future<Order?> _serverOrder(String action) async {
+    _autoSaveDebounce?.cancel();
+    await _autoSave();
+    final orderId = _orderId;
+    if (orderId == null) {
+      _showMessage('Connect to the internet to $action.');
+      return null;
+    }
+    try {
+      return await OrderService.fetchOrder(orderId);
+    } catch (e) {
+      _showMessage(friendlyError(e));
+      return null;
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showServerOrder(Order order) {
+    _suppressNextAutoSave = true;
+    ref.read(cartProvider.notifier).loadFromOrder(order);
+    ref.invalidate(openOrdersProvider);
+    ref.invalidate(tablesProvider);
+  }
+
+  Future<void> _moveTable() async {
+    final order = await _serverOrder('move tables');
+    if (order == null || !mounted) return;
+    ref.invalidate(tablesProvider);
+    final List<RestaurantTable> tables;
+    try {
+      tables = await ref.read(tablesProvider.future);
+    } catch (e) {
+      _showMessage(friendlyError(e));
+      return;
+    }
+    final free =
+        tables.where((t) => !t.isOccupied && t.id != order.tableId).toList()
+          ..sort((a, b) => naturalCompare(a.name, b.name));
+    if (!mounted) return;
+    final target = await showDialog<RestaurantTable>(
+      context: context,
+      builder: (_) => _MoveTableDialog(tables: free),
+    );
+    if (target == null || !mounted) return;
+    setState(() => _loading = true);
+    try {
+      final moved = await OrderService.moveTable(order.id!, target.id);
+      _showServerOrder(moved);
+      _showMessage('Moved to ${target.name}');
+    } catch (e) {
+      _showMessage(friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _splitBill() async {
+    final order = await _serverOrder('split the bill');
+    if (order == null || !mounted) return;
+    if (order.items.length < 2 && order.items.every((i) => i.quantity < 2)) {
+      _showMessage('Add at least two items before splitting the bill.');
+      return;
+    }
+    final selection = await showModalBottomSheet<Map<int, int>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _SplitBillSheet(order: order),
+    );
+    if (selection == null || selection.isEmpty || !mounted) return;
+    setState(() => _loading = true);
+    try {
+      final result = await OrderService.splitOrder(order.id!, selection);
+      _showServerOrder(result.source);
+      if (mounted) context.push('/cashier/payment/${result.newOrder.id}');
+    } catch (e) {
+      _showMessage(friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartProvider);
@@ -317,6 +414,36 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
         appBar: AppBar(
           title: Text(title),
           actions: [
+            if (cart.items.isNotEmpty)
+              PopupMenuButton<String>(
+                tooltip: 'More',
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                enabled: !_loading && !_printingBill,
+                onSelected: (action) => switch (action) {
+                  'move' => _moveTable(),
+                  'split' => _splitBill(),
+                  _ => null,
+                },
+                itemBuilder: (_) => [
+                  if (cart.orderType != OrderTypes.takeAway)
+                    const PopupMenuItem(
+                      value: 'move',
+                      child: ListTile(
+                        leading: Icon(Icons.swap_horiz),
+                        title: Text('Move Table'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  const PopupMenuItem(
+                    value: 'split',
+                    child: ListTile(
+                      leading: Icon(Icons.call_split),
+                      title: Text('Split Bill'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
             if (cart.items.isNotEmpty)
               TextButton.icon(
                 onPressed: _saving || _printingBill ? null : _printBill,
@@ -1046,6 +1173,178 @@ class _QtyButton extends StatelessWidget {
           color: colorScheme.surfaceContainerHighest,
         ),
         child: Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+      ),
+    );
+  }
+}
+
+/// Picks a free table to move the whole order to.
+class _MoveTableDialog extends StatelessWidget {
+  final List<RestaurantTable> tables;
+
+  const _MoveTableDialog({required this.tables});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Move to table'),
+      content: SizedBox(
+        width: 360,
+        child: tables.isEmpty
+            ? const Text('All other tables are occupied.')
+            : Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final table in tables)
+                    ActionChip(
+                      avatar: const Icon(Icons.table_restaurant, size: 18),
+                      label: Text(table.name),
+                      onPressed: () => Navigator.pop(context, table),
+                    ),
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Chooses which items (and how many of each) go on a separate bill.
+/// Returns order item id -> quantity to move.
+class _SplitBillSheet extends StatefulWidget {
+  final Order order;
+
+  const _SplitBillSheet({required this.order});
+
+  @override
+  State<_SplitBillSheet> createState() => _SplitBillSheetState();
+}
+
+class _SplitBillSheetState extends State<_SplitBillSheet> {
+  final Map<int, int> _moving = {};
+
+  List<OrderItem> get _items =>
+      widget.order.items.where((i) => i.id != null).toList();
+
+  double get _newSubtotal => _items.fold(0, (sum, item) {
+    final qty = _moving[item.id] ?? 0;
+    if (qty == 0) return sum;
+    return sum + (item.weight != null ? item.subtotal : item.unitPrice * qty);
+  });
+
+  bool get _movesEverything =>
+      _items.every((item) => (_moving[item.id] ?? 0) == item.quantity);
+
+  void _set(OrderItem item, int qty) => setState(() {
+    if (qty <= 0) {
+      _moving.remove(item.id);
+    } else {
+      _moving[item.id!] = qty;
+    }
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final nothingSelected = _moving.isEmpty;
+    final canSplit = !nothingSelected && !_movesEverything;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Split Bill', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'Choose what goes on the separate bill. The rest stays on this table\'s bill.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [for (final item in _items) _row(item)],
+              ),
+            ),
+            const Divider(),
+            Row(
+              children: [
+                const Expanded(child: Text('New bill subtotal')),
+                Text(
+                  formatRM(_newSubtotal),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            if (_movesEverything && !nothingSelected) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Leave at least one item on the original bill.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              icon: const Icon(Icons.call_split),
+              label: const Text('Split & Pay'),
+              onPressed: canSplit
+                  ? () => Navigator.pop(context, Map.of(_moving))
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(OrderItem item) {
+    final moving = _moving[item.id] ?? 0;
+    final detail = item.weight != null
+        ? '${item.weight!.toStringAsFixed(3)} kg · ${formatRM(item.subtotal)}'
+        : '${item.quantity} × ${formatRM(item.unitPrice)}';
+    if (item.weight != null) {
+      return CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        value: moving > 0,
+        title: Text(item.productName),
+        subtitle: Text(detail),
+        onChanged: (v) => _set(item, v == true ? item.quantity : 0),
+      );
+    }
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(item.productName),
+      subtitle: Text(detail),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.remove_circle_outline),
+            onPressed: moving > 0 ? () => _set(item, moving - 1) : null,
+          ),
+          SizedBox(
+            width: 48,
+            child: Text(
+              '$moving / ${item.quantity}',
+              textAlign: TextAlign.center,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline),
+            onPressed: moving < item.quantity
+                ? () => _set(item, moving + 1)
+                : null,
+          ),
+        ],
       ),
     );
   }

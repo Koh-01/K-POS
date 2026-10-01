@@ -28,6 +28,21 @@ def _set_table_status(db: Session, table_id: int | None, status: str):
         table.status = status
 
 
+def _release_table_if_free(db: Session, table_id: int | None, exclude_order_id: int) -> None:
+    """Mark a table available unless another open order (e.g. a split bill)
+    is still seated there."""
+    if table_id is None:
+        return
+    still_used = db.query(models.Order.id).filter(
+        models.Order.table_id == table_id,
+        models.Order.id != exclude_order_id,
+        models.Order.status == "open",
+        models.Order.is_deleted == False,
+    ).first()
+    if not still_used:
+        _set_table_status(db, table_id, "available")
+
+
 def _validated_weight(product: models.Product, weight_kg):
     """Keep item pricing mode consistent with the product catalogue."""
     if product.sold_by_weight:
@@ -259,7 +274,7 @@ def update_order(
             if new_table.status == "occupied" and data.table_id != order.table_id:
                 raise HTTPException(status_code=409, detail="Table is already occupied")
         if order.table_id != data.table_id:
-            _set_table_status(db, order.table_id, "available")
+            _release_table_if_free(db, order.table_id, order.id)
             if new_table:
                 new_table.status = "occupied"
             order.table_id = data.table_id
@@ -267,7 +282,7 @@ def update_order(
         order.table_name = data.table_name
 
     if order.order_type == "take_away" and order.table_id is not None:
-        _set_table_status(db, order.table_id, "available")
+        _release_table_if_free(db, order.table_id, order.id)
         order.table_id = None
 
     if data.items is not None:
@@ -313,7 +328,7 @@ def delete_order(
         raise HTTPException(status_code=400, detail="Paid orders cannot be deleted here. Use the payment module.")
     order.is_deleted = True
     if order.status == "open":
-        _set_table_status(db, order.table_id, "available")
+        _release_table_if_free(db, order.table_id, order.id)
     db.commit()
 
 
@@ -348,7 +363,10 @@ def change_table(
 
     old_table_id = order.table_id
     order.table_id = new_table_id
-    _set_table_status(db, old_table_id, "available")
+    # A custom label ("Patio") belonged to the old seat, not the new table.
+    order.table_name = None
+    if old_table_id != new_table_id:
+        _release_table_if_free(db, old_table_id, order.id)
     _set_table_status(db, new_table_id, "occupied")
     db.commit()
     db.refresh(order)
@@ -393,10 +411,76 @@ def combine_orders(
 
     source.status = "cancelled"
     if source.table_id != target.table_id:
-        _set_table_status(db, source.table_id, "available")
+        _release_table_if_free(db, source.table_id, source.id)
     db.commit()
     db.refresh(target)
     return target
+
+
+# ── Split Bill ────────────────────────────────────────────────────────────────
+
+@router.post("/orders/{order_id}/split", response_model=schemas.OrderSplitResponse, status_code=201)
+def split_order(
+    order_id: int,
+    data: schemas.OrderSplitRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Move some items (or part of a line's quantity) to a new open order at
+    the same table, so guests at one table can pay separately."""
+    order = db.query(models.Order).filter(
+        models.Order.id == order_id,
+        models.Order.is_deleted == False,
+        models.Order.status == "open",
+    ).with_for_update().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found or not open")
+
+    lines = {item.id: item for item in order.items}
+    moves: list[tuple[models.OrderItem, int]] = []
+    for request in data.items:
+        item = lines.pop(request.item_id, None)
+        if item is None:
+            raise HTTPException(status_code=400, detail="An item is not on this bill or was listed twice")
+        if item.weight_kg is not None:
+            if request.quantity not in (None, item.quantity):
+                raise HTTPException(status_code=400, detail="Weighed items move to the new bill as a whole")
+            quantity = item.quantity
+        else:
+            quantity = request.quantity or item.quantity
+            if quantity > item.quantity:
+                raise HTTPException(status_code=400, detail="Cannot move more than the quantity ordered")
+        moves.append((item, quantity))
+
+    keeps_something = bool(lines) or any(quantity < item.quantity for item, quantity in moves)
+    if not keeps_something:
+        raise HTTPException(status_code=400, detail="Leave at least one item on the original bill")
+
+    new_order = models.Order(
+        order_number=_generate_order_number(db),
+        table_id=order.table_id,
+        table_name=order.table_name,
+        order_type=order.order_type,
+        created_by=current_user.id,
+    )
+    db.add(new_order)
+    db.flush()
+    for item, quantity in moves:
+        if quantity == item.quantity:
+            item.order_id = new_order.id
+        else:
+            item.quantity -= quantity
+            db.add(models.OrderItem(
+                order_id=new_order.id,
+                product_id=item.product_id,
+                quantity=quantity,
+                unit_price=item.unit_price,
+                notes=item.notes,
+            ))
+    db.commit()
+    db.refresh(order)
+    db.refresh(new_order)
+    return {"source": order, "new_order": new_order}
 
 
 # ── Order Items ───────────────────────────────────────────────────────────────

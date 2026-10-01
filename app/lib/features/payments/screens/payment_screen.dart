@@ -399,6 +399,12 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       await ReceiptPrinter.printBill(
         order: order,
         summary: summary,
+        placeLabel: orderPlaceLabel(
+          orderType: order.orderType,
+          tableName: order.tableName,
+          tableId: order.tableId,
+          tables: ref.read(tablesProvider).valueOrNull,
+        ),
         storeName: settings?.storeName ?? 'My Restaurant',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,

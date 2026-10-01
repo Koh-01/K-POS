@@ -294,7 +294,8 @@ class _LoginForm extends StatelessWidget {
               prefixIcon: Icon(Icons.person_outline),
             ),
             textInputAction: TextInputAction.next,
-            validator: (v) => v == null || v.isEmpty ? 'Enter email or username' : null,
+            validator: (v) =>
+                v == null || v.isEmpty ? 'Enter email or username' : null,
           ),
           const SizedBox(height: 14),
           TextFormField(
@@ -367,10 +368,10 @@ class _LoginForm extends StatelessWidget {
             onPressed: auth.isLoading
                 ? null
                 : () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const RegisterScreen(),
-                      ),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RegisterScreen(),
                     ),
+                  ),
             child: const Text('Create a restaurant Admin account'),
           ),
           const SizedBox(height: 6),

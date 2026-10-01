@@ -321,6 +321,22 @@ class OrderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OrderSplitItem(BaseModel):
+    item_id: int
+    # How many to move to the new bill; None moves the whole line. Weighed
+    # items always move as a whole line.
+    quantity: int | None = Field(default=None, ge=1)
+
+
+class OrderSplitRequest(BaseModel):
+    items: list[OrderSplitItem] = Field(min_length=1)
+
+
+class OrderSplitResponse(BaseModel):
+    source: OrderResponse
+    new_order: OrderResponse
+
+
 # ── StoreSettings ─────────────────────────────────────────
 class SettingsResponse(BaseModel):
     sst_enabled: bool

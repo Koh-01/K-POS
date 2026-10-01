@@ -369,6 +369,37 @@ class OrderService {
     await ApiClient.instance.delete('/orders/$orderId');
   }
 
+  /// Moves an open order (all its items) to another free table.
+  static Future<Order> moveTable(int orderId, int tableId) async {
+    final res = await ApiClient.instance.post(
+      '/orders/$orderId/change-table',
+      data: {'table_id': tableId},
+    );
+    return Order.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  /// Moves [quantities] (order item id -> quantity) to a new bill at the same
+  /// table. Returns the remaining original bill and the new one.
+  static Future<({Order source, Order newOrder})> splitOrder(
+    int orderId,
+    Map<int, int> quantities,
+  ) async {
+    final res = await ApiClient.instance.post(
+      '/orders/$orderId/split',
+      data: {
+        'items': [
+          for (final entry in quantities.entries)
+            {'item_id': entry.key, 'quantity': entry.value},
+        ],
+      },
+    );
+    final data = res.data as Map<String, dynamic>;
+    return (
+      source: Order.fromJson(data['source'] as Map<String, dynamic>),
+      newOrder: Order.fromJson(data['new_order'] as Map<String, dynamic>),
+    );
+  }
+
   // POST /sync/orders is a batch endpoint: it takes a JSON *array* and
   // returns one result per item (matched by offline_ref), so every pending
   // order is sent in a single request rather than one call each.

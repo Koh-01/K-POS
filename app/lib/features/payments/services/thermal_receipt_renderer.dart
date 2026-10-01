@@ -11,15 +11,30 @@ import '../../../core/models/store_settings.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../providers/payment_provider.dart';
 
+/// A rendered receipt as raw RGBA pixels, ready for [EscPosRaster].
+class ReceiptRaster {
+  final Uint8List rgba;
+  final int width;
+  final int height;
+
+  const ReceiptRaster(this.rgba, this.width, this.height);
+}
+
 /// Draws receipts with Flutter fonts before sending them to an ESC/POS
 /// printer. This keeps Chinese text legible even when the printer has no
 /// Chinese code page installed.
 class ThermalReceiptRenderer {
-  static const int width = 384;
+  /// Printable dots per line at 203 dpi.
+  static const int dots58mm = 384;
+  static const int dots80mm = 576;
 
-  static Future<Uint8List> bill({
+  static int dotsForPaper(int paperMm) => paperMm >= 80 ? dots80mm : dots58mm;
+
+  static Future<ReceiptRaster> bill({
     required Order order,
     required CheckoutSummary summary,
+    String? placeLabel,
+    int width = dots58mm,
     required String storeName,
     String? storeAddress,
     String? storePhone,
@@ -27,10 +42,12 @@ class ThermalReceiptRenderer {
     String? employeeName,
     String? posName,
   }) {
-    final orderLabel = order.orderType == OrderTypes.takeAway
-        ? 'Takeaway'
-        : (order.tableName ?? 'Table ${order.tableId ?? ''}').trim();
-    return _ReceiptCanvas().render(
+    final orderLabel =
+        placeLabel ??
+        (order.orderType == OrderTypes.takeAway
+            ? 'Takeaway'
+            : (order.tableName ?? 'Dine in').trim());
+    return _ReceiptCanvas(width).render(
       storeName: storeName,
       storeAddress: storeAddress,
       storePhone: storePhone,
@@ -57,9 +74,10 @@ class ThermalReceiptRenderer {
     );
   }
 
-  static Future<Uint8List> receipt({
+  static Future<ReceiptRaster> receipt({
     required Payment payment,
     required List<OrderItem> items,
+    int width = dots58mm,
     required String storeName,
     String? storeAddress,
     String? storePhone,
@@ -73,7 +91,7 @@ class ThermalReceiptRenderer {
       'card' => 'Card',
       _ => payment.paymentMethod,
     };
-    return _ReceiptCanvas().render(
+    return _ReceiptCanvas(width).render(
       storeName: storeName,
       storeAddress: storeAddress,
       storePhone: storePhone,
@@ -101,7 +119,8 @@ class ThermalReceiptRenderer {
     );
   }
 
-  static Future<Uint8List> salarySlip({
+  static Future<ReceiptRaster> salarySlip({
+    int width = dots58mm,
     required String workerName,
     required String position,
     required int year,
@@ -110,7 +129,7 @@ class ThermalReceiptRenderer {
     String? note,
     required String storeName,
   }) {
-    return _ReceiptCanvas().renderSalarySlip(
+    return _ReceiptCanvas(width).renderSalarySlip(
       workerName: workerName,
       position: position,
       year: year,
@@ -137,13 +156,16 @@ class _ReceiptCanvas {
     'sans-serif',
   ];
 
+  _ReceiptCanvas(this.width);
+
+  final int width;
   final ui.PictureRecorder _recorder = ui.PictureRecorder();
   late final Canvas _canvas = Canvas(_recorder);
   double _y = 12;
 
-  double get _contentWidth => ThermalReceiptRenderer.width - (_margin * 2);
+  double get _contentWidth => width - (_margin * 2);
 
-  Future<Uint8List> render({
+  Future<ReceiptRaster> render({
     required String storeName,
     String? storeAddress,
     String? storePhone,
@@ -170,7 +192,7 @@ class _ReceiptCanvas {
     required DateTime printedAt,
   }) async {
     _canvas.drawRect(
-      Rect.fromLTWH(0, 0, ThermalReceiptRenderer.width.toDouble(), 20000),
+      Rect.fromLTWH(0, 0, width.toDouble(), 20000),
       Paint()..color = Colors.white,
     );
 
@@ -292,7 +314,7 @@ class _ReceiptCanvas {
     return _finish();
   }
 
-  Future<Uint8List> renderSalarySlip({
+  Future<ReceiptRaster> renderSalarySlip({
     required String workerName,
     required String position,
     required int year,
@@ -317,7 +339,7 @@ class _ReceiptCanvas {
       'December',
     ];
     _canvas.drawRect(
-      Rect.fromLTWH(0, 0, ThermalReceiptRenderer.width.toDouble(), 20000),
+      Rect.fromLTWH(0, 0, width.toDouble(), 20000),
       Paint()..color = Colors.white,
     );
     final nameParts = _splitStoreName(storeName);
@@ -376,17 +398,15 @@ class _ReceiptCanvas {
     return _finish();
   }
 
-  Future<Uint8List> _finish() async {
+  Future<ReceiptRaster> _finish() async {
     final picture = _recorder.endRecording();
-    final image = await picture.toImage(
-      ThermalReceiptRenderer.width,
-      _y.ceil().clamp(1, 20000),
-    );
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final height = _y.ceil().clamp(1, 20000);
+    final image = await picture.toImage(width, height);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     image.dispose();
     picture.dispose();
     if (byteData == null) throw StateError('Could not render receipt image.');
-    return byteData.buffer.asUint8List();
+    return ReceiptRaster(byteData.buffer.asUint8List(), width, height);
   }
 
   void _text(
@@ -401,6 +421,9 @@ class _ReceiptCanvas {
       weight: weight,
       align: align,
       maxWidth: _contentWidth,
+      // Without a minimum width the painter shrinks to the text, so center
+      // and right alignment had no effect and everything printed flush left.
+      fillWidth: true,
     );
     painter.paint(_canvas, Offset(_margin, _y));
     _y += painter.height + 2;
@@ -417,7 +440,7 @@ class _ReceiptCanvas {
       size: size,
       weight: weight,
       align: TextAlign.right,
-      maxWidth: 132,
+      maxWidth: _contentWidth * 0.4,
     );
     final leftWidth = _contentWidth - rightPainter.width - 10;
     final leftPainter = _painter(
@@ -429,7 +452,7 @@ class _ReceiptCanvas {
     leftPainter.paint(_canvas, Offset(_margin, _y));
     rightPainter.paint(
       _canvas,
-      Offset(ThermalReceiptRenderer.width - _margin - rightPainter.width, _y),
+      Offset(width - _margin - rightPainter.width, _y),
     );
     _y +=
         (leftPainter.height > rightPainter.height
@@ -444,6 +467,7 @@ class _ReceiptCanvas {
     required FontWeight weight,
     TextAlign align = TextAlign.left,
     required double maxWidth,
+    bool fillWidth = false,
   }) {
     return TextPainter(
       text: TextSpan(
@@ -458,7 +482,7 @@ class _ReceiptCanvas {
       ),
       textAlign: align,
       textDirection: ui.TextDirection.ltr,
-    )..layout(maxWidth: maxWidth);
+    )..layout(minWidth: fillWidth ? maxWidth : 0, maxWidth: maxWidth);
   }
 
   void _separator() {
@@ -466,11 +490,7 @@ class _ReceiptCanvas {
     final paint = Paint()
       ..color = Colors.black
       ..strokeWidth = 1.5;
-    for (
-      double x = _margin;
-      x < ThermalReceiptRenderer.width - _margin;
-      x += 7
-    ) {
+    for (double x = _margin; x < width - _margin; x += 7) {
       _canvas.drawLine(Offset(x, _y), Offset(x + 3.5, _y), paint);
     }
     _y += 8;
