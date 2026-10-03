@@ -20,8 +20,10 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
   @override
   void initState() {
     super.initState();
-    // Table status changes on other tablets too; always start from the
-    // server's current state rather than a cached "Occupied".
+    // Table status changes on other tablets too: fetch the current state on
+    // open. The refresh is silent (the grid stays on screen and updates in
+    // place) — the app also refreshes tables every 30 s in the background,
+    // and showing a spinner for each of those made the screen flicker.
     Future.microtask(() {
       if (mounted) ref.invalidate(tablesProvider);
     });
@@ -103,8 +105,6 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
           ),
           Expanded(
             child: tablesAsync.when(
-              // Show the spinner while refreshing instead of stale statuses.
-              skipLoadingOnRefresh: false,
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text(loadError(e))),
               data: (tables) => tables.isEmpty
