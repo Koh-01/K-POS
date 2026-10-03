@@ -18,6 +18,16 @@ class TableSelectionScreen extends ConsumerStatefulWidget {
 
 class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
   @override
+  void initState() {
+    super.initState();
+    // Table status changes on other tablets too; always start from the
+    // server's current state rather than a cached "Occupied".
+    Future.microtask(() {
+      if (mounted) ref.invalidate(tablesProvider);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final tablesAsync = ref.watch(tablesProvider);
 
@@ -93,6 +103,8 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
           ),
           Expanded(
             child: tablesAsync.when(
+              // Show the spinner while refreshing instead of stale statuses.
+              skipLoadingOnRefresh: false,
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(child: Text(loadError(e))),
               data: (tables) => tables.isEmpty

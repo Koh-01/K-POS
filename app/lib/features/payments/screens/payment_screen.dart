@@ -270,6 +270,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
     }
     ref.read(cartProvider.notifier).clear();
     ref.invalidate(openOrdersProvider);
+    ref.invalidate(tablesProvider);
     ref.invalidate(pendingSyncCountProvider);
     if (!mounted) return;
     setState(() {
@@ -355,6 +356,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           );
       ref.read(cartProvider.notifier).clear();
       ref.invalidate(openOrdersProvider);
+      ref.invalidate(tablesProvider);
       if (!mounted) return;
       setState(() => _completedPayment = payment);
     } catch (e) {

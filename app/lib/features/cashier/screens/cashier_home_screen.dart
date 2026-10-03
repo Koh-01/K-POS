@@ -141,7 +141,10 @@ class CashierHomeScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
-            onPressed: () => ref.invalidate(openOrdersProvider),
+            onPressed: () {
+              ref.invalidate(openOrdersProvider);
+              ref.invalidate(tablesProvider);
+            },
           ),
           PopupMenuButton<String>(
             onSelected: (v) {
@@ -356,7 +359,9 @@ class _OrderCard extends ConsumerWidget {
       } else if (order.offlineRef != null) {
         await LocalDb.deletePendingOrder(order.offlineRef!);
       }
+      // The freed table must not keep showing "Occupied" from the cache.
       ref.invalidate(openOrdersProvider);
+      ref.invalidate(tablesProvider);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
