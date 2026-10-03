@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -389,14 +390,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ScaffoldMessenger.of(context)
           ..clearSnackBars()
           ..showSnackBar(
-            const SnackBar(
-              content: Text('Could not connect to printer. Please try again.'),
+            SnackBar(
+              duration: const Duration(seconds: 6),
+              content: Text(
+                'Could not connect to printer. Check it is on and nearby, '
+                'then try again.\n(${_printerErrorDetail(e)})',
+              ),
             ),
           );
       }
     } finally {
       if (mounted) setState(() => _connectingAddress = null);
     }
+  }
+
+  /// Short technical reason, shown so a failed connection can be diagnosed
+  /// from a screenshot.
+  static String _printerErrorDetail(Object e) {
+    final text = e is PlatformException
+        ? '${e.code}: ${e.message ?? ''}'
+        : e.toString();
+    return text.length > 160 ? '${text.substring(0, 160)}…' : text;
   }
 
   Future<void> _testPrint() async {

@@ -15,7 +15,8 @@ class ReceiptPrinter {
   static final _printer = BlueThermalPrinter.instance;
   static const _statusTimeout = Duration(seconds: 3);
   static const _scanTimeout = Duration(seconds: 6);
-  static const _connectTimeout = Duration(seconds: 12);
+  // Secure RFCOMM, then the insecure fallback, can each take several seconds.
+  static const _connectTimeout = Duration(seconds: 20);
   static const _writeTimeout = Duration(seconds: 8);
   static const _addressKey = 'printer_address';
   static const _nameKey = 'printer_name';

@@ -509,8 +509,13 @@ public class BlueThermalPrinterPlugin implements FlutterPlugin, ActivityAware,Me
           result.error("connect_error", "device not found", null);
           return;
         }
-        // Cancel bt discovery, even though we didn't start it
-        mBluetoothAdapter.cancelDiscovery();
+        // K POS patch: cancelDiscovery() needs BLUETOOTH_SCAN on Android 12+,
+        // which we deliberately don't request (paired printers only). Without
+        // this guard every connect failed with a SecurityException.
+        try {
+          mBluetoothAdapter.cancelDiscovery();
+        } catch (SecurityException ignored) {
+        }
 
         BluetoothSocket socket = null;
         try {
@@ -520,7 +525,12 @@ public class BlueThermalPrinterPlugin implements FlutterPlugin, ActivityAware,Me
           // Many low-cost thermal printers only accept insecure RFCOMM.
           closeQuietly(socket);
           socket = device.createInsecureRfcommSocketToServiceRecord(MY_UUID);
-          socket.connect();
+          try {
+            socket.connect();
+          } catch (IOException second) {
+            closeQuietly(socket);
+            throw second;
+          }
         }
         ConnectedThread thread = new ConnectedThread(socket);
         THREAD = thread;
