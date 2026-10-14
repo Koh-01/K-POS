@@ -143,7 +143,7 @@ class ThermalReceiptRenderer {
 
   static String _footer(StoreSettings? settings) {
     final configured = settings?.receiptFooter.trim() ?? '';
-    return configured.isEmpty ? 'Thank You. Please come again.' : configured;
+    return configured; // empty = print no footer
   }
 }
 
@@ -231,7 +231,9 @@ class _ReceiptCanvas {
         align: TextAlign.center,
       );
     }
-    if (nameParts.english.isEmpty && nameParts.chinese.isEmpty) {
+    if (nameParts.english.isEmpty &&
+        nameParts.chinese.isEmpty &&
+        storeName.trim().isNotEmpty) {
       _text(
         storeName,
         size: 25,
@@ -299,8 +301,10 @@ class _ReceiptCanvas {
       _leftRight('找零 / Change', formatRM(changeGiven ?? 0), size: 19);
     }
     _separator();
-    _text(footer, size: 19, align: TextAlign.center);
-    _space(5);
+    if (footer.trim().isNotEmpty) {
+      _text(footer, size: 19, align: TextAlign.center);
+      _space(5);
+    }
     final dateText = DateFormat('dd/MM/yyyy HH:mm').format(printedAt.toLocal());
     if (receiptNumber != null && receiptNumber.isNotEmpty) {
       _leftRight(dateText, 'Receipt No: $receiptNumber', size: 17);

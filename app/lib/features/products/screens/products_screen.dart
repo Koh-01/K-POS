@@ -7,6 +7,7 @@ import '../../../shared/utils/currency_formatter.dart';
 import '../../../features/auth/providers/auth_provider.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../../shared/utils/natural_compare.dart';
+import '../../../shared/utils/toast.dart';
 
 class ProductsScreen extends ConsumerStatefulWidget {
   const ProductsScreen({super.key});
@@ -65,9 +66,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(error))));
+        showToast(context, friendlyError(error), error: true);
       }
     } finally {
       if (mounted) setState(() => _batchBusy = false);
@@ -107,9 +106,7 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(error))));
+        showToast(context, friendlyError(error), error: true);
       }
     } finally {
       if (mounted) setState(() => _batchBusy = false);

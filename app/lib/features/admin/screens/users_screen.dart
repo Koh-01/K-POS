@@ -4,6 +4,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/models/user.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 final _usersProvider = FutureProvider.autoDispose<List<User>>((ref) async {
   final res = await ApiClient.instance.get('/users');
@@ -51,13 +52,6 @@ class UsersScreen extends ConsumerWidget {
     );
     if (created != true) return;
     ref.invalidate(_usersProvider);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(content: Text('User created successfully')),
-        );
-    }
   }
 }
 
@@ -349,15 +343,11 @@ class _UserTile extends StatelessWidget {
           data: {'new_password': ctrl.text},
         );
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(const SnackBar(content: Text('Password updated')));
+          showToast(context, 'Password updated');
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }
@@ -487,15 +477,11 @@ class _UserTile extends StatelessWidget {
         );
         onRefresh();
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(const SnackBar(content: Text('Permissions saved')));
+          showToast(context, 'Permissions saved');
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }
@@ -510,9 +496,7 @@ class _UserTile extends StatelessWidget {
       onRefresh();
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }
@@ -540,21 +524,9 @@ class _UserTile extends StatelessWidget {
       try {
         await ApiClient.instance.delete('/users/${user.id}');
         onRefresh();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(const SnackBar(content: Text('User deleted')));
-        }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(
-              SnackBar(
-                content: Text(friendlyError(e)),
-                duration: const Duration(seconds: 4),
-              ),
-            );
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }

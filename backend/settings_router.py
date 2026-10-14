@@ -29,7 +29,7 @@ _DEFAULTS: dict[str, str] = {
     # Whether salary payments require the worker to sign on the tablet
     "require_salary_signature": "0",
     # Store info
-    "store_name": "My Restaurant",
+    "store_name": "",
     "store_address": "",
     "store_phone": "",
     "store_email": "",
@@ -42,12 +42,14 @@ _DEFAULTS: dict[str, str] = {
     "receipt_header": "",
     "receipt_header_size": "1",
     "receipt_header_align": "1",
-    "receipt_footer": "Thank you for dining with us!",
+    "receipt_footer": "",
     "receipt_footer_size": "0",
     "receipt_footer_align": "1",
     "receipt_show_logo": "0",
     # DuitNow QR
     "duitnow_qr_image_url": "",
+    # Category ids whose items are shown on open-order cards (e.g. soup base).
+    "order_card_category_ids": "",
 }
 
 
@@ -57,6 +59,10 @@ def _get_settings(db: Session) -> dict:
     for row in rows:
         cfg[row.key] = row.value
     return cfg
+
+
+def _parse_ids(value: str) -> list[int]:
+    return [int(part) for part in value.split(",") if part.strip().isdigit()]
 
 
 @router.get("/settings", response_model=schemas.AllSettingsResponse)
@@ -85,6 +91,7 @@ def get_settings(db: Session = Depends(get_db), _=Depends(get_current_user)):
         receipt_footer_align=int(cfg.get("receipt_footer_align", "1")),
         receipt_show_logo=cfg["receipt_show_logo"] == "1",
         duitnow_qr_image_url=cfg.get("duitnow_qr_image_url", ""),
+        order_card_category_ids=_parse_ids(cfg.get("order_card_category_ids", "")),
     )
 
 
@@ -111,6 +118,10 @@ def update_settings(
         updates["payment_to_cash_record"] = "1" if body.payment_to_cash_record else "0"
     if body.require_salary_signature is not None:
         updates["require_salary_signature"] = "1" if body.require_salary_signature else "0"
+    if body.order_card_category_ids is not None:
+        updates["order_card_category_ids"] = ",".join(
+            str(i) for i in dict.fromkeys(body.order_card_category_ids)
+        )
     if body.store_name is not None:
         updates["store_name"] = body.store_name
     if body.store_address is not None:

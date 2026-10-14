@@ -4,6 +4,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/models/category.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 final categoriesProvider = FutureProvider.autoDispose<List<Category>>((
   ref,
@@ -56,9 +57,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
       await ApiClient.instance.post('/categories/reorder', data: items);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _reordering = false);
@@ -127,9 +126,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
       if (mounted) setState(() => _localCats = List.from(fresh));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }
@@ -162,9 +159,7 @@ class _CategoriesScreenState extends ConsumerState<CategoriesScreen> {
       if (mounted) setState(() => _localCats = List.from(fresh));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }

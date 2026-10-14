@@ -1,7 +1,7 @@
 class ApiConstants {
   static const String defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://htd5110-ktspos.koh01.com',
+    defaultValue: 'https://kpos.koh01.com',
   );
   // Kept short so a dead connection (Tunnel down, no signal, etc.) fails
   // fast into the app's offline fallback instead of leaving the UI looking

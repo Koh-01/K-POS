@@ -12,7 +12,10 @@ import '../../../core/api/api_client.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/models/store_settings.dart';
 import '../../payments/services/receipt_printer.dart';
+import '../../products/providers/products_provider.dart';
+import '../../../shared/utils/error_utils.dart';
 import 'package:blue_thermal_printer/blue_thermal_printer.dart';
+import '../../../shared/utils/toast.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -54,6 +57,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _testingPrinter = false;
   String? _connectingAddress;
   int _paperWidthMm = 58;
+  List<int> _orderCardCategoryIds = [];
 
   String? _qrImagePath;
   bool _uploadingQr = false;
@@ -124,6 +128,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _receiptFooterSize = s.receiptFooterSize;
     _receiptFooterAlign = s.receiptFooterAlign;
     _receiptShowLogo = s.receiptShowLogo;
+    _orderCardCategoryIds = [...s.orderCardCategoryIds];
     _settingsLoaded = true;
     if (mounted) setState(() {});
   }
@@ -195,13 +200,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       // AppBar "Saving…" indicator is enough feedback.
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Failed to save settings. Please try again.'),
-            ),
-          );
+        showToast(
+          context,
+          'Failed to save settings. Please try again.',
+          error: true,
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -266,18 +269,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       ref.invalidate(settingsMutableProvider);
       ref.invalidate(settingsProvider);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(const SnackBar(content: Text('DuitNow QR updated')));
-      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(content: Text('Upload failed. Please try again.')),
-          );
+        showToast(context, 'Upload failed. Please try again.', error: true);
       }
     } finally {
       if (mounted) setState(() => _uploadingQr = false);
@@ -316,18 +310,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       ref.invalidate(settingsMutableProvider);
       ref.invalidate(settingsProvider);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(const SnackBar(content: Text('Store logo updated')));
-      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(content: Text('Upload failed. Please try again.')),
-          );
+        showToast(context, 'Upload failed. Please try again.', error: true);
       }
     } finally {
       if (mounted) setState(() => _uploadingLogo = false);
@@ -346,15 +331,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Could not scan Bluetooth devices. Make sure Bluetooth is enabled.',
-              ),
-            ),
-          );
+        showToast(
+          context,
+          'Could not scan Bluetooth devices. Make sure Bluetooth is enabled.',
+          error: true,
+        );
       }
     } finally {
       if (mounted) setState(() => _loadingDevices = false);
@@ -377,27 +358,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _connectedAddress = device.address;
         _printerConnected = true;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(content: Text('Connected to ${device.name}')),
-          );
-      }
     } catch (e) {
       if (mounted) {
         setState(() => _printerConnected = false);
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              duration: const Duration(seconds: 6),
-              content: Text(
-                'Could not connect to printer. Check it is on and nearby, '
-                'then try again.\n(${_printerErrorDetail(e)})',
-              ),
-            ),
-          );
+        showToast(
+          context,
+          'Could not connect to printer. Check it is on and nearby, '
+          'then try again.\n(${_printerErrorDetail(e)})',
+          error: true,
+        );
       }
     } finally {
       if (mounted) setState(() => _connectingAddress = null);
@@ -413,40 +382,47 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return text.length > 160 ? '${text.substring(0, 160)}…' : text;
   }
 
+  /// Saved straight away (not via the debounced auto-save) so every tablet's
+  /// open-order cards switch at once. Null = show no items on the cards.
+  Future<void> _setOrderCardCategory(int? categoryId) async {
+    if (!_settingsLoaded) return;
+    final previous = [..._orderCardCategoryIds];
+    setState(() {
+      _orderCardCategoryIds = categoryId == null ? [] : [categoryId];
+    });
+    try {
+      await ref.read(settingsMutableProvider.notifier).save({
+        'order_card_category_ids': _orderCardCategoryIds,
+      });
+      ref.invalidate(settingsProvider);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _orderCardCategoryIds = previous);
+      showToast(context, friendlyError(e), error: true);
+    }
+  }
+
   Future<void> _testPrint() async {
     if (_testingPrinter) return;
     if (!_printerConnected) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Printer is not connected. Scan and connect it before testing.',
-            ),
-          ),
-        );
+      showToast(
+        context,
+        'Printer is not connected. Scan and connect it before testing.',
+        error: true,
+      );
       return;
     }
     setState(() => _testingPrinter = true);
     try {
       await ReceiptPrinter.testPrint();
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(const SnackBar(content: Text('Test print sent')));
-      }
     } catch (e) {
       if (mounted) {
         setState(() => _printerConnected = false);
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Printer is not connected. Scan and connect it before testing.',
-              ),
-            ),
-          );
+        showToast(
+          context,
+          'Printer is not connected. Scan and connect it before testing.',
+          error: true,
+        );
       }
     } finally {
       if (mounted) setState(() => _testingPrinter = false);
@@ -739,6 +715,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ctrl: _serviceRateCtrl,
                               keyboardType: TextInputType.number,
                             ),
+                        ],
+                      ),
+                      _Section(
+                        title: 'Order Cards',
+                        children: [
+                          ref
+                              .watch(productsProvider)
+                              .when(
+                                loading: () => const LinearProgressIndicator(),
+                                error: (e, _) => Text(friendlyError(e)),
+                                data: (catalog) {
+                                  final ids = catalog.categories
+                                      .map((c) => c.id)
+                                      .toSet();
+                                  final current =
+                                      _orderCardCategoryIds.isNotEmpty &&
+                                          ids.contains(
+                                            _orderCardCategoryIds.first,
+                                          )
+                                      ? _orderCardCategoryIds.first
+                                      : null;
+                                  return DropdownButtonFormField<int?>(
+                                    key: ValueKey(current),
+                                    initialValue: current,
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Category on order cards',
+                                    ),
+                                    items: [
+                                      const DropdownMenuItem(
+                                        value: null,
+                                        child: Text('None'),
+                                      ),
+                                      for (final c in catalog.categories)
+                                        DropdownMenuItem(
+                                          value: c.id,
+                                          child: Text(c.name),
+                                        ),
+                                    ],
+                                    onChanged: _setOrderCardCategory,
+                                  );
+                                },
+                              ),
                         ],
                       ),
                       _Section(

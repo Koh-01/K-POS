@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/promotion.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 final _promotionsProvider = FutureProvider.autoDispose<List<Promotion>>((
   ref,
@@ -197,43 +198,27 @@ class PromotionsScreen extends ConsumerWidget {
                 final code = promoCodeCtrl.text.trim();
 
                 if (name.isEmpty) {
-                  ScaffoldMessenger.of(context)
-                    ..clearSnackBars()
-                    ..showSnackBar(
-                      const SnackBar(content: Text('Name is required')),
-                    );
+                  showToast(context, 'Name is required', error: true);
                   return;
                 }
                 if (type == 'b1f1' && b1f1ProductId == null) {
-                  ScaffoldMessenger.of(context)
-                    ..clearSnackBars()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Please select a product for Buy 1 Free 1',
-                        ),
-                      ),
-                    );
+                  showToast(
+                    context,
+                    'Please select a product for Buy 1 Free 1',
+                    error: true,
+                  );
                   return;
                 }
                 if (type != 'b1f1' && (pct <= 0 || pct > 100)) {
-                  ScaffoldMessenger.of(context)
-                    ..clearSnackBars()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text('Enter a valid % value (1–100)'),
-                      ),
-                    );
+                  showToast(
+                    context,
+                    'Enter a valid % value (1–100)',
+                    error: true,
+                  );
                   return;
                 }
                 if (type == 'promo_code' && code.isEmpty) {
-                  ScaffoldMessenger.of(context)
-                    ..clearSnackBars()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text('Promo code cannot be empty'),
-                      ),
-                    );
+                  showToast(context, 'Promo code cannot be empty', error: true);
                   return;
                 }
 
@@ -285,9 +270,7 @@ class PromotionsScreen extends ConsumerWidget {
                   ref.invalidate(_promotionsProvider);
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..clearSnackBars()
-                      ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+                    showToast(context, friendlyError(e), error: true);
                   }
                 }
               },

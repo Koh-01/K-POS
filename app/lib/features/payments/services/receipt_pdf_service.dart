@@ -45,15 +45,16 @@ class ReceiptPdfService {
                   ),
                 ),
               ),
-            pw.Center(
-              child: pw.Text(
-                storeName,
-                style: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  fontSize: 14,
+            if (storeName.trim().isNotEmpty)
+              pw.Center(
+                child: pw.Text(
+                  storeName,
+                  style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 14,
+                  ),
                 ),
               ),
-            ),
             if (storeAddress != null && storeAddress.isNotEmpty)
               pw.Center(
                 child: pw.Text(
@@ -126,10 +127,10 @@ class ReceiptPdfService {
             ],
             pw.SizedBox(height: 10),
             pw.Divider(),
-            if ((settings?.receiptFooter ?? 'Thank you!').isNotEmpty)
+            if ((settings?.receiptFooter ?? '').trim().isNotEmpty)
               pw.Center(
                 child: pw.Text(
-                  settings?.receiptFooter ?? 'Thank you!',
+                  settings!.receiptFooter.trim(),
                   style: pw.TextStyle(
                     fontStyle: pw.FontStyle.italic,
                     fontSize: 11,

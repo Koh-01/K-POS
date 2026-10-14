@@ -7,6 +7,7 @@ import '../providers/products_provider.dart';
 import '../../../core/api/api_client.dart';
 import 'package:dio/dio.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 class ProductFormScreen extends ConsumerStatefulWidget {
   final int? productId;
@@ -52,9 +53,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -102,22 +101,13 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(isEdit ? 'Product updated' : 'Product created'),
-            ),
-          );
         context.pop();
       }
       ref.invalidate(productsListProvider);
       ref.invalidate(productsProvider);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _loading = false);

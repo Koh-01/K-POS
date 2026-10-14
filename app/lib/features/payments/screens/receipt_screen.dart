@@ -8,6 +8,7 @@ import '../../settings/providers/settings_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../services/receipt_pdf_service.dart';
 import '../services/receipt_printer.dart';
+import '../../../shared/utils/toast.dart';
 
 class ReceiptScreen extends ConsumerWidget {
   final Payment payment;
@@ -36,11 +37,8 @@ class ReceiptScreen extends ConsumerWidget {
       ),
       body: settingsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, st) => _ReceiptBody(
-          payment: payment,
-          items: items,
-          storeName: 'My Restaurant',
-        ),
+        error: (err, st) =>
+            _ReceiptBody(payment: payment, items: items, storeName: ''),
         data: (settings) => _ReceiptBody(
           payment: payment,
           items: items,
@@ -64,7 +62,7 @@ class ReceiptScreen extends ConsumerWidget {
                   await ReceiptPrinter.print(
                     payment: payment,
                     items: items,
-                    storeName: settings?.storeName ?? 'My Restaurant',
+                    storeName: settings?.storeName ?? '',
                     storeAddress: settings?.storeAddress,
                     storePhone: settings?.storePhone,
                     settings: settings,
@@ -75,15 +73,11 @@ class ReceiptScreen extends ConsumerWidget {
                   );
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..clearSnackBars()
-                      ..showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Print failed. Make sure the printer is connected and try again.',
-                          ),
-                        ),
-                      );
+                    showToast(
+                      context,
+                      'Print failed. Make sure the printer is connected and try again.',
+                      error: true,
+                    );
                   }
                 }
               },
@@ -98,22 +92,18 @@ class ReceiptScreen extends ConsumerWidget {
                   await ReceiptPdfService.share(
                     payment: payment,
                     items: items,
-                    storeName: settings?.storeName ?? 'My Restaurant',
+                    storeName: settings?.storeName ?? '',
                     storeAddress: settings?.storeAddress,
                     storePhone: settings?.storePhone,
                     settings: settings,
                   );
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..clearSnackBars()
-                      ..showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Could not generate PDF. Please try again.',
-                          ),
-                        ),
-                      );
+                    showToast(
+                      context,
+                      'Could not generate PDF. Please try again.',
+                      error: true,
+                    );
                   }
                 }
               },
@@ -168,14 +158,15 @@ class _ReceiptBody extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  Text(
-                    storeName,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                  if (storeName.trim().isNotEmpty)
+                    Text(
+                      storeName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
-                  ),
-                  if (storeAddress != null)
+                  if (storeAddress?.trim().isNotEmpty ?? false)
                     Text(
                       storeAddress!,
                       style: TextStyle(color: Colors.grey.shade600),

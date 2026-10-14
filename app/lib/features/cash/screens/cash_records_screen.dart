@@ -14,6 +14,7 @@ import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/csv_downloader.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../../shared/theme/app_theme.dart';
+import '../../../shared/utils/toast.dart';
 
 /// Converts locally-queued (not-yet-synced) cash records into displayable
 /// [CashRecord]s. Uses id -1 as an "offline, pending sync" marker.
@@ -538,18 +539,12 @@ class _CashRecordsScreenState extends ConsumerState<CashRecordsScreen> {
     final result = await downloadCsv(buffer.toString(), filename);
 
     if (context.mounted) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              result == filename
-                  ? 'CSV downloaded: $filename'
-                  : 'CSV saved to: $result',
-            ),
-            duration: const Duration(seconds: 4),
-          ),
-        );
+      showToast(
+        context,
+        result == filename
+            ? 'CSV downloaded: $filename'
+            : 'CSV saved to: $result',
+      );
     }
   }
 
@@ -661,9 +656,7 @@ class _CashRecordsScreenState extends ConsumerState<CashRecordsScreen> {
                   ref.invalidate(_cashProvider);
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..clearSnackBars()
-                      ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+                    showToast(context, friendlyError(e), error: true);
                   }
                 }
               },
@@ -708,9 +701,7 @@ class _CashRecordsScreenState extends ConsumerState<CashRecordsScreen> {
         ref.invalidate(_cashProvider);
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }
@@ -752,11 +743,7 @@ class _CashRecordFormState extends State<_CashRecordForm> {
     final offlineRef = const Uuid().v4();
     final amount = double.tryParse(_amountCtrl.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(content: Text('Please enter a valid amount.')),
-        );
+      showToast(context, 'Please enter a valid amount.', error: true);
       return;
     }
     final desc = _descCtrl.text.trim();
@@ -798,9 +785,7 @@ class _CashRecordFormState extends State<_CashRecordForm> {
       if (!ApiException.isOfflineFailure(e)) {
         if (mounted) {
           setState(() => _saving = false);
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
         return;
       }
@@ -819,24 +804,16 @@ class _CashRecordFormState extends State<_CashRecordForm> {
       if (mounted) {
         Navigator.pop(context);
         widget.onSaved();
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Saved offline. Will sync when back online. / '
-                '已离线保存，联网后自动同步。',
-              ),
-              duration: Duration(seconds: 4),
-            ),
-          );
+        showToast(
+          context,
+          'Saved offline. Will sync when back online. / '
+          '已离线保存，联网后自动同步。',
+        );
       }
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }

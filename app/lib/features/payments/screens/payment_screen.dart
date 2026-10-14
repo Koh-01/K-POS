@@ -18,6 +18,7 @@ import '../../cashier/providers/cashier_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../settings/providers/settings_provider.dart';
 import '../services/receipt_printer.dart';
+import '../../../shared/utils/toast.dart';
 
 class PaymentScreen extends ConsumerStatefulWidget {
   final int orderId;
@@ -301,13 +302,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
         : summary.grandTotal;
 
     if (_method == 'cash' && cashReceived < summary.grandTotal) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Cash received is less than the total.'),
-          ),
-        );
+      showToast(context, 'Cash received is less than the total.', error: true);
       return;
     }
 
@@ -326,19 +321,6 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           cashReceived: cashReceived,
         );
         unawaited(_syncCheckoutInBackground(paymentOfflineRef));
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(
-              SnackBar(
-                content: Text(
-                  _isOffline
-                      ? 'Payment saved offline and will sync automatically.'
-                      : 'Payment completed. Syncing in the background.',
-                ),
-              ),
-            );
-        }
         return;
       }
 
@@ -361,14 +343,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       setState(() => _completedPayment = payment);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(friendlyError(e)),
-              duration: const Duration(seconds: 4),
-            ),
-          );
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _paying = false);
@@ -407,7 +382,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
           tableId: order.tableId,
           tables: ref.read(tablesProvider).valueOrNull,
         ),
-        storeName: settings?.storeName ?? 'My Restaurant',
+        storeName: settings?.storeName ?? '',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
         settings: settings,
@@ -447,7 +422,7 @@ class _PaymentScreenState extends ConsumerState<PaymentScreen> {
       await ReceiptPrinter.print(
         payment: _completedPayment!,
         items: _order?.items ?? [],
-        storeName: settings?.storeName ?? 'My Restaurant',
+        storeName: settings?.storeName ?? '',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
         settings: settings,

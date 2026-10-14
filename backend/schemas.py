@@ -548,6 +548,7 @@ class AllSettingsUpdate(BaseModel):
     duitnow_qr_image_url: str | None = None
     payment_to_cash_record: bool | None = None
     require_salary_signature: bool | None = None
+    order_card_category_ids: list[int] | None = Field(default=None, max_length=12)
 
     @field_validator("sst_rate", "service_charge_rate")
     @classmethod
@@ -591,6 +592,7 @@ class AllSettingsResponse(BaseModel):
     receipt_footer_align: int
     receipt_show_logo: bool
     duitnow_qr_image_url: str
+    order_card_category_ids: list[int] = Field(default_factory=list)
 
 
 # ── Login Log ──────────────────────────────────────────────

@@ -21,6 +21,10 @@ class StoreSettings {
   final int receiptFooterAlign;
   final bool receiptShowLogo;
 
+  /// Categories whose items are shown on open-order cards, e.g. a hotpot
+  /// restaurant's soup bases. Empty = show the first items of the order.
+  final List<int> orderCardCategoryIds;
+
   const StoreSettings({
     required this.storeName,
     this.storeAddress,
@@ -39,14 +43,15 @@ class StoreSettings {
     this.receiptHeader = '',
     this.receiptHeaderSize = 1,
     this.receiptHeaderAlign = 1,
-    this.receiptFooter = 'Thank you for dining with us!',
+    this.receiptFooter = '',
     this.receiptFooterSize = 0,
     this.receiptFooterAlign = 1,
     this.receiptShowLogo = false,
+    this.orderCardCategoryIds = const [],
   });
 
   factory StoreSettings.fromJson(Map<String, dynamic> json) => StoreSettings(
-    storeName: json['store_name'] as String? ?? 'My Restaurant',
+    storeName: json['store_name'] as String? ?? '',
     storeAddress: json['store_address'] as String?,
     storePhone: json['store_phone'] as String?,
     storeEmail: json['store_email'] as String?,
@@ -67,15 +72,18 @@ class StoreSettings {
     receiptHeader: json['receipt_header'] as String? ?? '',
     receiptHeaderSize: json['receipt_header_size'] as int? ?? 1,
     receiptHeaderAlign: json['receipt_header_align'] as int? ?? 1,
-    receiptFooter:
-        json['receipt_footer'] as String? ?? 'Thank you for dining with us!',
+    receiptFooter: json['receipt_footer'] as String? ?? '',
     receiptFooterSize: json['receipt_footer_size'] as int? ?? 0,
     receiptFooterAlign: json['receipt_footer_align'] as int? ?? 1,
     receiptShowLogo: json['receipt_show_logo'] as bool? ?? false,
+    orderCardCategoryIds: [
+      for (final id in (json['order_card_category_ids'] as List? ?? const []))
+        if (id is int) id,
+    ],
   );
 
   static const StoreSettings defaults = StoreSettings(
-    storeName: 'My Restaurant',
+    storeName: '',
     sstRate: 0.06,
     serviceChargeRate: 0.10,
     enableSst: false,

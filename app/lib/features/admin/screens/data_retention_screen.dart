@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 class DataRetentionScreen extends ConsumerStatefulWidget {
   const DataRetentionScreen({super.key});
@@ -29,9 +30,7 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
       setState(() => _preview = res.data as Map<String, dynamic>);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -78,15 +77,11 @@ class _DataRetentionScreenState extends ConsumerState<DataRetentionScreen> {
         final summary = deleted.entries
             .map((e) => '${e.key}: ${e.value}')
             .join(', ');
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text('Deleted — $summary')));
+        showToast(context, 'Deleted — $summary');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _cleaning = false);

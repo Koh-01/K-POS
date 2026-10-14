@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 final _annualReportProvider = FutureProvider.family
     .autoDispose<Map<String, dynamic>, int>((ref, year) async {
@@ -61,25 +62,11 @@ class _AnnualReportScreenState extends ConsumerState<AnnualReportScreen> {
       final file = File('${dir.path}/annual_tax_report_$_year.csv');
       await file.writeAsBytes(res.data as List<int>);
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Saved to ${file.path}'),
-              duration: const Duration(seconds: 4),
-            ),
-          );
+        showToast(context, 'Saved to ${file.path}');
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(friendlyError(e)),
-              backgroundColor: Colors.red,
-            ),
-          );
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }

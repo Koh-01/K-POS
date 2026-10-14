@@ -77,13 +77,13 @@ The operator's full database dump (all restaurants) still goes to
    test users can connect, and their tokens expire after 7 days.
 3. Credentials → Create OAuth client ID → **Web application**. Authorized
    redirect URI: `{PUBLIC_BASE_URL}/web/settings/google-drive/callback`
-   (for example `https://htd5110-ktspos.koh01.com/web/settings/google-drive/callback`).
+   (for example `https://kpos.koh01.com/web/settings/google-drive/callback`).
 4. Put the client ID and secret into `.env`:
 
 ```dotenv
 GOOGLE_OAUTH_CLIENT_ID=xxxx.apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=...
-PUBLIC_BASE_URL=https://htd5110-ktspos.koh01.com
+PUBLIC_BASE_URL=https://kpos.koh01.com
 ```
 
 ## Existing single-restaurant migration

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 class AdminToolsScreen extends ConsumerStatefulWidget {
   const AdminToolsScreen({super.key});
@@ -120,9 +121,7 @@ class _AdminToolsScreenState extends ConsumerState<AdminToolsScreen> {
             label: Text(settingsUrl, overflow: TextOverflow.ellipsis),
             onPressed: () {
               Clipboard.setData(ClipboardData(text: settingsUrl));
-              ScaffoldMessenger.of(context)
-                ..clearSnackBars()
-                ..showSnackBar(const SnackBar(content: Text('Link copied')));
+              showToast(context, 'Link copied');
             },
           ),
       ],
@@ -139,15 +138,11 @@ class _AdminToolsScreenState extends ConsumerState<AdminToolsScreen> {
       if (mounted) {
         final filename =
             (res.data as Map<String, dynamic>?)?['filename'] ?? 'done';
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text('Backup complete: $filename')));
+        showToast(context, 'Backup complete: $filename');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _backingUp = false);
@@ -165,15 +160,11 @@ class _AdminToolsScreenState extends ConsumerState<AdminToolsScreen> {
       if (mounted) {
         final filename =
             (res.data as Map<String, dynamic>?)?['filename'] ?? 'done';
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text('Report uploaded: $filename')));
+        showToast(context, 'Report uploaded: $filename');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _reportRunning = false);

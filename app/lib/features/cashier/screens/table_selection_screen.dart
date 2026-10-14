@@ -7,6 +7,8 @@ import '../../../core/api/api_client.dart';
 import '../../../core/models/restaurant_table.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../../shared/utils/grid_utils.dart';
+import '../../../shared/theme/app_theme.dart';
+import '../../../shared/utils/toast.dart';
 
 class TableSelectionScreen extends ConsumerStatefulWidget {
   const TableSelectionScreen({super.key});
@@ -34,73 +36,28 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
     final tablesAsync = ref.watch(tablesProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Select Table')),
+      appBar: AppBar(title: const Text('Start an order')),
+      // One "+" for an order at a seat that isn't in the table list (VIP
+      // room, bar seat…). Permanent tables are managed in Admin → Tables.
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _addTable(context),
-        tooltip: 'Add table',
+        onPressed: () => _customTable(context),
+        tooltip: 'Other seat',
         child: const Icon(Icons.add),
       ),
       body: Column(
         children: [
-          // Takeaway
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.shopping_bag_outlined),
-                label: const Text('Takeaway Order'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: BorderSide(
-                    color: Theme.of(context).colorScheme.primary,
-                    width: 1.5,
-                  ),
-                  foregroundColor: Theme.of(context).colorScheme.primary,
-                ),
-                onPressed: () {
-                  ref.read(cartProvider.notifier)
-                    ..clear()
-                    ..setOrderType(OrderTypes.takeAway);
-                  context.push('/cashier/order/new');
-                },
-              ),
-            ),
-          ),
-          // Custom table name
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Custom Table Name'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: BorderSide(
-                    color: Theme.of(context).colorScheme.secondary,
-                    width: 1.5,
-                  ),
-                  foregroundColor: Theme.of(context).colorScheme.secondary,
-                ),
-                onPressed: () => _customTable(context),
-              ),
-            ),
-          ),
-          const Divider(height: 1),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'DINE IN — SELECT TABLE',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                  letterSpacing: 0.8,
-                ),
-              ),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            child: _OrderTypeCard(
+              icon: Icons.shopping_bag_outlined,
+              title: 'Takeaway',
+              accent: const Color(0xFFE07A3A),
+              onTap: () {
+                ref.read(cartProvider.notifier)
+                  ..clear()
+                  ..setOrderType(OrderTypes.takeAway);
+                context.push('/cashier/order/new');
+              },
             ),
           ),
           Expanded(
@@ -110,21 +67,33 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
               data: (tables) => tables.isEmpty
                   ? const Center(
                       child: Text(
-                        'No tables yet.\nTap + to add one.',
+                        'No tables',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.grey),
                       ),
                     )
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        const gridPadding = EdgeInsets.fromLTRB(16, 0, 16, 80);
+                        const gridPadding = EdgeInsets.fromLTRB(16, 0, 16, 88);
                         return GridView.builder(
                           padding: gridPadding,
                           gridDelegate: responsiveGridDelegate(
-                            constraints: constraints,
+                            // Ignore the keyboard (seat-name dialog) when
+                            // sizing cards, so they don't squash behind it.
+                            constraints: constraints.copyWith(
+                              maxHeight:
+                                  constraints.maxHeight +
+                                  View.of(context).viewInsets.bottom /
+                                      View.of(context).devicePixelRatio,
+                            ),
                             padding: gridPadding,
-                            spacing: 10,
-                            narrowAspectRatio: 1.05,
+                            spacing: 12,
+                            narrowColumns: constraints.maxWidth < 480 ? 2 : 3,
+                            narrowAspectRatio: 2.0,
+                            // Compact cards: more tables per screen, no empty
+                            // space above the name.
+                            wideColumns: 5,
+                            wideVisibleRows: 5,
                           ),
                           itemCount: tables.length,
                           itemBuilder: (ctx, i) =>
@@ -141,18 +110,16 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
 
   void _refresh() => ref.invalidate(tablesProvider);
 
-  Future<void> _addTable(BuildContext context) async {
+  Future<void> _customTable(BuildContext context) async {
     final ctrl = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Add Table'),
+        title: const Text('Seat name'),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Table name (e.g. Table 5)',
-          ),
+          decoration: const InputDecoration(hintText: 'VIP Room, Bar 2…'),
           textCapitalization: TextCapitalization.words,
           onSubmitted: (_) => Navigator.pop(ctx, true),
         ),
@@ -163,62 +130,7 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && ctrl.text.trim().isNotEmpty && context.mounted) {
-      try {
-        await ApiClient.instance.post(
-          '/tables',
-          data: {'name': ctrl.text.trim()},
-        );
-        _refresh();
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
-        }
-      }
-    }
-  }
-
-  Future<void> _customTable(BuildContext context) async {
-    final ctrl = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Custom Table Name'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Enter a name for this order.\nThis will NOT be saved to the table list.',
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'e.g. VIP Room, Bar Seat 2',
-              ),
-              textCapitalization: TextCapitalization.words,
-              onSubmitted: (_) => Navigator.pop(ctx, true),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Confirm'),
+            child: const Text('Start'),
           ),
         ],
       ),
@@ -230,6 +142,61 @@ class _TableSelectionScreenState extends ConsumerState<TableSelectionScreen> {
       context.push('/cashier/order/new');
     }
   }
+}
+
+class _OrderTypeCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const _OrderTypeCard({
+    required this.icon,
+    required this.title,
+    required this.accent,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTheme.borderLight),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            Icon(Icons.arrow_forward_rounded, color: accent, size: 20),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _TableCard extends ConsumerWidget {
@@ -248,12 +215,10 @@ class _TableCard extends ConsumerWidget {
           if (orderId == null) {
             // Never fall through to a blank order: that would seat a second,
             // table-less order instead of adding to the existing one.
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Loading ${table.name}\'s order, please try again.',
-                ),
-              ),
+            showToast(
+              context,
+              'Loading ${table.name}\'s order, please try again.',
+              error: true,
             );
             onRefresh();
             return;
@@ -269,32 +234,73 @@ class _TableCard extends ConsumerWidget {
       onLongPress: () => _showManageSheet(context),
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: occupied ? Colors.red.shade100 : Colors.green.shade100,
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.white,
           border: Border.all(
-            color: occupied ? Colors.red.shade300 : Colors.green.shade300,
-            width: 1.5,
+            color: occupied
+                ? AppTheme.danger.withValues(alpha: .45)
+                : AppTheme.borderLight,
           ),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Icon(
-              Icons.table_restaurant,
-              size: 30,
-              color: occupied ? Colors.red : Colors.green.shade700,
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(
+                width: 5,
+                decoration: BoxDecoration(
+                  color: occupied ? AppTheme.danger : AppTheme.success,
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(15),
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              table.name,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-            Text(
-              occupied ? 'Occupied' : 'Free',
-              style: TextStyle(
-                fontSize: 11,
-                color: occupied ? Colors.red.shade700 : Colors.green.shade700,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 10, 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.table_restaurant_rounded,
+                    size: 22,
+                    color: occupied ? AppTheme.danger : AppTheme.success,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      table.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 20,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (occupied)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.danger.withValues(alpha: .09),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        'Occupied',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.danger,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
@@ -378,9 +384,7 @@ class _TableCard extends ConsumerWidget {
         onRefresh();
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }
@@ -411,9 +415,7 @@ class _TableCard extends ConsumerWidget {
         onRefresh();
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }

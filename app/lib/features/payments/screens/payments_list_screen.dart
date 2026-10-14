@@ -8,6 +8,7 @@ import '../../../core/api/api_exception.dart';
 import '../../../features/auth/providers/auth_provider.dart';
 import 'payment_detail_screen.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 class PaymentsListScreen extends ConsumerWidget {
   const PaymentsListScreen({super.key});
@@ -152,17 +153,14 @@ class _PaymentTile extends StatelessWidget {
       ),
     );
     if (ok == true && context.mounted) {
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.clearSnackBars();
       try {
         await ApiClient.instance.post(
           '/payments/${payment.id}/void',
           data: {'reason': reasonCtrl.text.trim()},
         );
         ref.invalidate(paymentsListProvider);
-        messenger.showSnackBar(const SnackBar(content: Text('Payment voided')));
       } on ApiException catch (e) {
-        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+        if (context.mounted) showToast(context, e.message, error: true);
       }
     }
     reasonCtrl.dispose();

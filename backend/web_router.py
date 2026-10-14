@@ -1783,7 +1783,7 @@ async def print_salary_slip(
     if not p:
         return RedirectResponse(url="/web/salary?tab=payments", status_code=303)
 
-    store_name = _get_setting(db, "store_name", "POS System")
+    store_name = _get_setting(db, "store_name", "").strip()
     now = local_now()
     printed_at = now.strftime("%d/%m/%Y %H:%M")
     month_name = _FULL_MONTH_NAMES[p.month - 1]
@@ -1844,7 +1844,8 @@ async def print_salary_slip(
         c.setDash()
         y -= 12
 
-    draw_line(store_name, size=12, bold=True)
+    if store_name:
+        draw_line(store_name, size=12, bold=True)
     y -= 4
     draw_line("** SALARY SLIP **", size=10, bold=True)
     draw_line(f"{month_name} {p.year}", size=10)

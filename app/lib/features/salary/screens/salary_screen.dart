@@ -10,6 +10,7 @@ import '../../../features/settings/providers/settings_provider.dart';
 import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../../shared/widgets/signature_pad.dart';
+import '../../../shared/utils/toast.dart';
 
 // ── Providers ──────────────────────────────────────────────────────────────
 
@@ -201,11 +202,7 @@ class _WorkerTile extends StatelessWidget {
                     onRefreshWorkers();
                   } catch (e) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context)
-                        ..clearSnackBars()
-                        ..showSnackBar(
-                          SnackBar(content: Text(friendlyError(e))),
-                        );
+                      showToast(context, friendlyError(e), error: true);
                     }
                   }
                 }
@@ -356,11 +353,7 @@ class _PaymentTile extends ConsumerWidget {
                     onRefresh();
                   } catch (e) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context)
-                        ..clearSnackBars()
-                        ..showSnackBar(
-                          SnackBar(content: Text(friendlyError(e))),
-                        );
+                      showToast(context, friendlyError(e), error: true);
                     }
                   }
                 }
@@ -467,23 +460,13 @@ class _PaymentTile extends ConsumerWidget {
         note: p.note,
         storeName: settings.storeName,
       );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(const SnackBar(content: Text('Salary slip printed')));
-      }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Print failed. Make sure the printer is connected and try again.',
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
+        showToast(
+          context,
+          'Print failed. Make sure the printer is connected and try again.',
+          error: true,
+        );
       }
     }
   }
@@ -523,11 +506,7 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
   Future<void> _save() async {
     final amount = double.tryParse(_amountCtrl.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(content: Text('Please enter a valid amount.')),
-        );
+      showToast(context, 'Please enter a valid amount.', error: true);
       return;
     }
     setState(() => _saving = true);
@@ -543,9 +522,7 @@ class _EditPaymentSheetState extends State<_EditPaymentSheet> {
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }
@@ -662,9 +639,7 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
   Future<void> _save() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(const SnackBar(content: Text('Name is required')));
+      showToast(context, 'Name is required', error: true);
       return;
     }
     setState(() => _saving = true);
@@ -688,9 +663,7 @@ class _WorkerFormSheetState extends State<_WorkerFormSheet> {
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }
@@ -825,11 +798,7 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
   Future<void> _save() async {
     final amount = double.tryParse(_amountCtrl.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(content: Text('Please enter a valid amount.')),
-        );
+      showToast(context, 'Please enter a valid amount.', error: true);
       return;
     }
 
@@ -919,25 +888,13 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
             note: _noteCtrl.text.trim().isEmpty ? null : _noteCtrl.text.trim(),
             storeName: settings.storeName,
           );
-          if (mounted) {
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(
-                const SnackBar(content: Text('Salary slip printed')),
-              );
-          }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Print failed. Make sure the printer is connected and try again.',
-                  ),
-                  backgroundColor: Colors.red,
-                ),
-              );
+            showToast(
+              context,
+              'Print failed. Make sure the printer is connected and try again.',
+              error: true,
+            );
           }
         }
       }
@@ -945,9 +902,7 @@ class _PaySalarySheetState extends ConsumerState<_PaySalarySheet> {
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     }
   }

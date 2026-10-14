@@ -10,6 +10,7 @@ import '../providers/payment_provider.dart';
 import '../services/receipt_pdf_service.dart';
 import '../services/receipt_printer.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 class PaymentDetailScreen extends ConsumerStatefulWidget {
   final int paymentId;
@@ -65,7 +66,7 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
       await ReceiptPrinter.print(
         payment: detail,
         items: detail.items,
-        storeName: settings?.storeName ?? 'My Restaurant',
+        storeName: settings?.storeName ?? '',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
         settings: settings,
@@ -74,11 +75,6 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
             : user?.username,
         posName: user?.username,
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(const SnackBar(content: Text('Receipt printed')));
-      }
     } catch (e) {
       if (mounted) {
         showDialog(
@@ -111,20 +107,18 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
       await ReceiptPdfService.share(
         payment: detail,
         items: detail.items,
-        storeName: settings?.storeName ?? 'My Restaurant',
+        storeName: settings?.storeName ?? '',
         storeAddress: settings?.storeAddress,
         storePhone: settings?.storePhone,
         settings: settings,
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text('Could not generate PDF. Please try again.'),
-            ),
-          );
+        showToast(
+          context,
+          'Could not generate PDF. Please try again.',
+          error: true,
+        );
       }
     }
   }
@@ -187,16 +181,9 @@ class _PaymentDetailScreenState extends ConsumerState<PaymentDetailScreen> {
       );
       ref.invalidate(paymentsListProvider);
       await _load();
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(const SnackBar(content: Text('Receipt updated')));
-      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _submitting = false);

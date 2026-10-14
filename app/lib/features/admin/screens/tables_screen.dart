@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/restaurant_table.dart';
 import '../../../shared/utils/error_utils.dart';
+import '../../../shared/utils/toast.dart';
 
 final _tablesManageProvider = FutureProvider.autoDispose<List<RestaurantTable>>(
   (ref) async {
@@ -84,9 +85,7 @@ class TablesScreen extends ConsumerWidget {
         ref.invalidate(_tablesManageProvider);
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }
@@ -176,9 +175,7 @@ class _TableTile extends StatelessWidget {
         onRefresh();
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }
@@ -209,9 +206,7 @@ class _TableTile extends StatelessWidget {
         onRefresh();
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-            ..clearSnackBars()
-            ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+          showToast(context, friendlyError(e), error: true);
         }
       }
     }

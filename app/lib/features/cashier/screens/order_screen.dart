@@ -21,6 +21,8 @@ import '../../../shared/utils/currency_formatter.dart';
 import '../../../shared/utils/error_utils.dart';
 import '../../../shared/utils/grid_utils.dart';
 import '../../../shared/utils/natural_compare.dart';
+import '../../../shared/theme/app_theme.dart';
+import '../../../shared/utils/toast.dart';
 
 class OrderScreen extends ConsumerStatefulWidget {
   final int? orderId;
@@ -95,9 +97,7 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
         _suppressNextAutoSave = true;
         ref.read(cartProvider.notifier).loadFromOrder(cached);
       } else if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -281,9 +281,7 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(SnackBar(content: Text(friendlyError(e))));
+        showToast(context, friendlyError(e), error: true);
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -310,9 +308,7 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    showToast(context, message, error: true);
   }
 
   void _showServerOrder(Order order) {
@@ -339,14 +335,16 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
     if (!mounted) return;
     final target = await showDialog<RestaurantTable>(
       context: context,
-      builder: (_) => _MoveTableDialog(tables: free),
+      builder: (_) => _MoveTableDialog(
+        tables: free,
+        currentTableName: order.tableName ?? 'Current table',
+      ),
     );
     if (target == null || !mounted) return;
     setState(() => _loading = true);
     try {
       final moved = await OrderService.moveTable(order.id!, target.id);
       _showServerOrder(moved);
-      _showMessage('Moved to ${target.name}');
     } catch (e) {
       _showMessage(friendlyError(e));
     } finally {
@@ -361,11 +359,9 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
       _showMessage('Add at least two items before splitting the bill.');
       return;
     }
-    final selection = await showModalBottomSheet<Map<int, int>>(
+    final selection = await showDialog<Map<int, int>>(
       context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) => _SplitBillSheet(order: order),
+      builder: (_) => _SplitBillDialog(order: order),
     );
     if (selection == null || selection.isEmpty || !mounted) return;
     setState(() => _loading = true);
@@ -384,6 +380,7 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
   Widget build(BuildContext context) {
     final cart = ref.watch(cartProvider);
     final productsAsync = ref.watch(productsProvider);
+    final compact = MediaQuery.sizeOf(context).width < 600;
 
     // Auto-save on every cart edit (add/remove/qty/notes/table) instead of
     // requiring an explicit Save tap. Skip the one triggered by loading an
@@ -422,6 +419,8 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
                 onSelected: (action) => switch (action) {
                   'move' => _moveTable(),
                   'split' => _splitBill(),
+                  'print' => _printBill(),
+                  'save' => _saveAndExit(),
                   _ => null,
                 },
                 itemBuilder: (_) => [
@@ -442,9 +441,28 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
+                  if (compact) const PopupMenuDivider(),
+                  if (compact)
+                    const PopupMenuItem(
+                      value: 'print',
+                      child: ListTile(
+                        leading: Icon(Icons.print_outlined),
+                        title: Text('Print Bill'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  if (compact)
+                    const PopupMenuItem(
+                      value: 'save',
+                      child: ListTile(
+                        leading: Icon(Icons.save_outlined),
+                        title: Text('Save & Close'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
                 ],
               ),
-            if (cart.items.isNotEmpty)
+            if (cart.items.isNotEmpty && !compact)
               TextButton.icon(
                 onPressed: _saving || _printingBill ? null : _printBill,
                 icon: _printingBill
@@ -474,7 +492,7 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
                   ),
                 ),
               )
-            else if (cart.items.isNotEmpty)
+            else if (cart.items.isNotEmpty && !compact)
               TextButton.icon(
                 onPressed: _printingBill ? null : _saveAndExit,
                 icon: const Icon(Icons.save, color: Colors.white),
@@ -508,9 +526,9 @@ class _OrderScreenState extends ConsumerState<OrderScreen> {
                   if (isWide) {
                     return Row(
                       children: [
-                        Expanded(flex: 3, child: catalog),
+                        Expanded(flex: 5, child: catalog),
                         Container(
-                          width: 300,
+                          width: constraints.maxWidth >= 1000 ? 370 : 320,
                           decoration: BoxDecoration(
                             color: Theme.of(context).colorScheme.surface,
                             border: Border(
@@ -640,76 +658,86 @@ class _ProductCatalogState extends ConsumerState<_ProductCatalog> {
       filtered.sort((a, b) => naturalCompare(a.name, b.name));
     }
 
+    final narrow = MediaQuery.sizeOf(context).width < 600;
+    final border = OutlineInputBorder(borderRadius: BorderRadius.circular(10));
     return Column(
       children: [
-        // Search bar
+        // One row: category dropdown on the left (thumb side), search after.
         Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
-          child: TextField(
-            controller: _searchCtrl,
-            decoration: InputDecoration(
-              hintText: 'Search...',
-              prefixIcon: const Icon(Icons.search, size: 18),
-              suffixIcon: widget.search.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, size: 16),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        widget.onSearchChanged('');
-                      },
-                    )
-                  : null,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 8),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: narrow ? 140 : 220,
+                child: DropdownButtonFormField<int?>(
+                  initialValue: widget.selectedCategoryId,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    border: border,
+                  ),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('All')),
+                    for (final c in widget.categories)
+                      DropdownMenuItem(
+                        value: c.id as int,
+                        child: Text(
+                          c.name as String,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: widget.onCategorySelected,
+                ),
               ),
-            ),
-            onChanged: widget.onSearchChanged,
-          ),
-        ),
-        // Category filter dropdown
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-          child: DropdownButtonFormField<int?>(
-            initialValue: widget.selectedCategoryId,
-            isExpanded: true,
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 8,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              prefixIcon: const Icon(Icons.filter_list_rounded, size: 18),
-            ),
-            items: [
-              const DropdownMenuItem(
-                value: null,
-                child: Text('All Categories'),
-              ),
-              ...widget.categories.map(
-                (c) => DropdownMenuItem(
-                  value: c.id as int,
-                  child: Text(c.name as String),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                    hintText: 'Search',
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon: widget.search.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 16),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              widget.onSearchChanged('');
+                            },
+                          )
+                        : null,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                    border: border,
+                  ),
+                  onChanged: widget.onSearchChanged,
                 ),
               ),
             ],
-            onChanged: widget.onCategorySelected,
           ),
         ),
-        const Divider(height: 1),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              const gridPadding = EdgeInsets.all(10);
+              const gridPadding = EdgeInsets.fromLTRB(12, 2, 12, 24);
+              // Size tiles from the height *without* the keyboard, so opening
+              // search doesn't squash every tile; the grid just scrolls.
+              // Read it from the window: Scaffold strips the keyboard inset
+              // from MediaQuery for its body, so that would always be 0.
+              final view = View.of(context);
+              final keyboard = view.viewInsets.bottom / view.devicePixelRatio;
               return GridView.builder(
                 padding: gridPadding,
                 gridDelegate: responsiveGridDelegate(
-                  constraints: constraints,
+                  constraints: constraints.copyWith(
+                    maxHeight: constraints.maxHeight + keyboard,
+                  ),
                   padding: gridPadding,
+                  narrowColumns: constraints.maxWidth < 430 ? 2 : 3,
                 ),
                 itemCount: filtered.length,
                 itemBuilder: (ctx, i) => _ProductTile(product: filtered[i]),
@@ -1179,55 +1207,203 @@ class _QtyButton extends StatelessWidget {
 }
 
 /// Picks a free table to move the whole order to.
-class _MoveTableDialog extends StatelessWidget {
+class _MoveTableDialog extends StatefulWidget {
   final List<RestaurantTable> tables;
+  final String currentTableName;
 
-  const _MoveTableDialog({required this.tables});
+  const _MoveTableDialog({
+    required this.tables,
+    required this.currentTableName,
+  });
+
+  @override
+  State<_MoveTableDialog> createState() => _MoveTableDialogState();
+}
+
+class _MoveTableDialogState extends State<_MoveTableDialog> {
+  RestaurantTable? _selected;
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Move to table'),
-      content: SizedBox(
-        width: 360,
-        child: tables.isEmpty
-            ? const Text('All other tables are occupied.')
-            : Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final table in tables)
-                    ActionChip(
-                      avatar: const Icon(Icons.table_restaurant, size: 18),
-                      label: Text(table.name),
-                      onPressed: () => Navigator.pop(context, table),
+    return Dialog(
+      insetPadding: const EdgeInsets.all(20),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 680,
+          maxHeight: MediaQuery.sizeOf(context).height * .82,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DialogHeader(
+              icon: Icons.swap_horiz_rounded,
+              title: 'Move to table',
+              subtitle: 'Moving from ${widget.currentTableName}',
+            ),
+            Flexible(
+              child: widget.tables.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(40),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.event_busy_outlined,
+                            size: 40,
+                            color: AppTheme.textHint,
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'No free tables available',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'All other tables are currently occupied.',
+                            style: TextStyle(color: AppTheme.textHint),
+                          ),
+                        ],
+                      ),
+                    )
+                  : GridView.builder(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.all(20),
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 190,
+                            mainAxisExtent: 104,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          ),
+                      itemCount: widget.tables.length,
+                      itemBuilder: (context, index) {
+                        final table = widget.tables[index];
+                        final selected = _selected?.id == table.id;
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () => setState(() => _selected = table),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 140),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? const Color(0xFFEDF5FF)
+                                  : AppTheme.cream,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: selected
+                                    ? AppTheme.primaryBlue
+                                    : AppTheme.borderLight,
+                                width: selected ? 2 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.table_restaurant_rounded,
+                                  color: selected
+                                      ? AppTheme.primaryBlue
+                                      : AppTheme.textSecondary,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        table.name,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 15,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      const Text(
+                                        'Available',
+                                        style: TextStyle(
+                                          color: AppTheme.success,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (selected)
+                                  const Icon(
+                                    Icons.check_circle_rounded,
+                                    color: AppTheme.primaryBlue,
+                                    size: 20,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: AppTheme.borderLight)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _selected == null
+                          ? 'Select a destination table'
+                          : '${widget.currentTableName}  →  ${_selected!.name}',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _selected == null
+                        ? null
+                        : () => Navigator.pop(context, _selected),
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                    label: const Text('Move order'),
+                  ),
                 ],
               ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
 
 /// Chooses which items (and how many of each) go on a separate bill.
 /// Returns order item id -> quantity to move.
-class _SplitBillSheet extends StatefulWidget {
+class _SplitBillDialog extends StatefulWidget {
   final Order order;
 
-  const _SplitBillSheet({required this.order});
+  const _SplitBillDialog({required this.order});
 
   @override
-  State<_SplitBillSheet> createState() => _SplitBillSheetState();
+  State<_SplitBillDialog> createState() => _SplitBillDialogState();
 }
 
-class _SplitBillSheetState extends State<_SplitBillSheet> {
+class _SplitBillDialogState extends State<_SplitBillDialog> {
   final Map<int, int> _moving = {};
+  bool _showNewBill = false;
 
   List<OrderItem> get _items =>
       widget.order.items.where((i) => i.id != null).toList();
@@ -1237,6 +1413,8 @@ class _SplitBillSheetState extends State<_SplitBillSheet> {
     if (qty == 0) return sum;
     return sum + (item.weight != null ? item.subtotal : item.unitPrice * qty);
   });
+
+  double get _originalSubtotal => widget.order.subtotal - _newSubtotal;
 
   bool get _movesEverything =>
       _items.every((item) => (_moving[item.id] ?? 0) == item.quantity);
@@ -1253,52 +1431,191 @@ class _SplitBillSheetState extends State<_SplitBillSheet> {
   Widget build(BuildContext context) {
     final nothingSelected = _moving.isEmpty;
     final canSplit = !nothingSelected && !_movesEverything;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    final screen = MediaQuery.sizeOf(context);
+    final isPhone = screen.width < 600;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: SizedBox(
+        width: screen.width.clamp(0, 1000).toDouble(),
+        height: (screen.height * .86).clamp(480, 760).toDouble(),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Split Bill', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              'Choose what goes on the separate bill. The rest stays on this table\'s bill.',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            _DialogHeader(
+              icon: Icons.call_split,
+              title: 'Split bill',
+              subtitle: isPhone
+                  ? 'Review each bill and move items'
+                  : 'Move items between the original and new bill',
+            ),
+            Expanded(
+              child: Container(
+                color: AppTheme.cream,
+                padding: EdgeInsets.all(isPhone ? 10 : 16),
+                child: isPhone
+                    ? Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: AppTheme.creamDeep,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _billTab(
+                                    label: 'Original',
+                                    amount: _originalSubtotal,
+                                    selected: !_showNewBill,
+                                    onTap: () =>
+                                        setState(() => _showNewBill = false),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _billTab(
+                                    label: 'New bill',
+                                    amount: _newSubtotal,
+                                    selected: _showNewBill,
+                                    onTap: () =>
+                                        setState(() => _showNewBill = true),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Expanded(
+                            child: _billPanel(
+                              title: _showNewBill
+                                  ? 'New bill'
+                                  : 'Original bill',
+                              subtitle: _showNewBill
+                                  ? 'Continues to payment'
+                                  : 'Stays on this table',
+                              subtotal: _showNewBill
+                                  ? _newSubtotal
+                                  : _originalSubtotal,
+                              isNewBill: _showNewBill,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: _billPanel(
+                              title: 'Original bill',
+                              subtitle: 'Stays on this table',
+                              subtotal: _originalSubtotal,
+                              isNewBill: false,
+                            ),
+                          ),
+                          Container(
+                            width: 42,
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.compare_arrows_rounded,
+                              color: AppTheme.primaryBlue,
+                            ),
+                          ),
+                          Expanded(
+                            child: _billPanel(
+                              title: 'New bill',
+                              subtitle: 'Continues to payment',
+                              subtotal: _newSubtotal,
+                              isNewBill: true,
+                            ),
+                          ),
+                        ],
+                      ),
               ),
             ),
-            const SizedBox(height: 8),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: [for (final item in _items) _row(item)],
+            Container(
+              padding: EdgeInsets.fromLTRB(
+                isPhone ? 12 : 18,
+                10,
+                isPhone ? 12 : 18,
+                12,
               ),
-            ),
-            const Divider(),
-            Row(
-              children: [
-                const Expanded(child: Text('New bill subtotal')),
-                Text(
-                  formatRM(_newSubtotal),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            if (_movesEverything && !nothingSelected) ...[
-              const SizedBox(height: 6),
-              Text(
-                'Leave at least one item on the original bill.',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: AppTheme.borderLight)),
               ),
-            ],
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              icon: const Icon(Icons.call_split),
-              label: const Text('Split & Pay'),
-              onPressed: canSplit
-                  ? () => Navigator.pop(context, Map.of(_moving))
-                  : null,
+              child: isPhone
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          _splitStatus(nothingSelected),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _movesEverything && !nothingSelected
+                                ? AppTheme.danger
+                                : AppTheme.textSecondary,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Cancel'),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: FilledButton.icon(
+                                icon: const Icon(
+                                  Icons.arrow_forward_rounded,
+                                  size: 18,
+                                ),
+                                label: const Text('Split & pay'),
+                                onPressed: canSplit
+                                    ? () => Navigator.pop(
+                                        context,
+                                        Map.of(_moving),
+                                      )
+                                    : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _splitStatus(nothingSelected),
+                            style: TextStyle(
+                              color: _movesEverything && !nothingSelected
+                                  ? AppTheme.danger
+                                  : AppTheme.textSecondary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          icon: const Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 18,
+                          ),
+                          label: const Text('Split & pay'),
+                          onPressed: canSplit
+                              ? () => Navigator.pop(context, Map.of(_moving))
+                              : null,
+                        ),
+                      ],
+                    ),
             ),
           ],
         ),
@@ -1306,46 +1623,264 @@ class _SplitBillSheetState extends State<_SplitBillSheet> {
     );
   }
 
-  Widget _row(OrderItem item) {
-    final moving = _moving[item.id] ?? 0;
-    final detail = item.weight != null
-        ? '${item.weight!.toStringAsFixed(3)} kg · ${formatRM(item.subtotal)}'
-        : '${item.quantity} × ${formatRM(item.unitPrice)}';
-    if (item.weight != null) {
-      return CheckboxListTile(
-        contentPadding: EdgeInsets.zero,
-        value: moving > 0,
-        title: Text(item.productName),
-        subtitle: Text(detail),
-        onChanged: (v) => _set(item, v == true ? item.quantity : 0),
-      );
+  String _splitStatus(bool nothingSelected) {
+    if (_movesEverything && !nothingSelected) {
+      return 'Leave at least one item on the original bill.';
     }
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(item.productName),
-      subtitle: Text(detail),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+    if (nothingSelected) return 'Move at least one item to the new bill.';
+    return '${_moving.values.fold<int>(0, (a, b) => a + b)} item(s) moved';
+  }
+
+  Widget _billTab({
+    required String label,
+    required double amount,
+    required bool selected,
+    required VoidCallback onTap,
+  }) => Material(
+    color: selected ? Colors.white : Colors.transparent,
+    borderRadius: BorderRadius.circular(9),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+        child: Column(
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              formatRM(amount),
+              style: TextStyle(
+                color: selected ? AppTheme.primaryBlue : AppTheme.textHint,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _billPanel({
+    required String title,
+    required String subtitle,
+    required double subtotal,
+    required bool isNewBill,
+  }) {
+    final visible = _items.where((item) {
+      final moving = _moving[item.id] ?? 0;
+      return isNewBill ? moving > 0 : moving < item.quantity;
+    }).toList();
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isNewBill && _moving.isNotEmpty
+              ? AppTheme.primaryBlue.withValues(alpha: .55)
+              : AppTheme.borderLight,
+        ),
+      ),
+      child: Column(
         children: [
-          IconButton(
-            icon: const Icon(Icons.remove_circle_outline),
-            onPressed: moving > 0 ? () => _set(item, moving - 1) : null,
-          ),
-          SizedBox(
-            width: 48,
-            child: Text(
-              '$moving / ${item.quantity}',
-              textAlign: TextAlign.center,
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: isNewBill ? const Color(0xFFEDF5FF) : AppTheme.creamDeep,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(13),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: isNewBill ? AppTheme.primaryBlue : AppTheme.charcoal,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    isNewBill
+                        ? Icons.receipt_long_outlined
+                        : Icons.table_restaurant_outlined,
+                    color: Colors.white,
+                    size: 19,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textHint,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: moving < item.quantity
-                ? () => _set(item, moving + 1)
-                : null,
+          Expanded(
+            child: visible.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Text(
+                        isNewBill
+                            ? 'Items moved here will appear on this bill.'
+                            : 'No items remaining.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: AppTheme.textHint,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    itemCount: visible.length,
+                    separatorBuilder: (_, _) => const Divider(indent: 14),
+                    itemBuilder: (_, index) =>
+                        _billItem(visible[index], isNewBill: isNewBill),
+                  ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: AppTheme.borderLight)),
+            ),
+            child: Row(
+              children: [
+                const Text(
+                  'Subtotal',
+                  style: TextStyle(color: AppTheme.textSecondary),
+                ),
+                const Spacer(),
+                Text(
+                  formatRM(subtotal),
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
+
+  Widget _billItem(OrderItem item, {required bool isNewBill}) {
+    final moving = _moving[item.id] ?? 0;
+    final shownQty = isNewBill ? moving : item.quantity - moving;
+    final amount = item.weight != null
+        ? item.subtotal
+        : item.unitPrice * shownQty;
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      title: Text(
+        item.productName,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+      ),
+      subtitle: Text(
+        item.weight != null
+            ? '${item.weight!.toStringAsFixed(3)} kg · ${formatRM(amount)}'
+            : '$shownQty × ${formatRM(item.unitPrice)} · ${formatRM(amount)}',
+        style: const TextStyle(fontSize: 11),
+      ),
+      trailing: IconButton.filledTonal(
+        tooltip: isNewBill ? 'Return to original bill' : 'Move to new bill',
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          isNewBill ? Icons.arrow_back_rounded : Icons.arrow_forward_rounded,
+          size: 18,
+        ),
+        onPressed: isNewBill
+            ? () => _set(item, item.weight != null ? 0 : moving - 1)
+            : () =>
+                  _set(item, item.weight != null ? item.quantity : moving + 1),
+      ),
+    );
+  }
+}
+
+class _DialogHeader extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  const _DialogHeader({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(22, 16, 12, 16),
+    color: AppTheme.charcoal,
+    child: Row(
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .1),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(icon, color: Colors.white),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: 'Close',
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.close_rounded, color: Colors.white),
+        ),
+      ],
+    ),
+  );
 }
